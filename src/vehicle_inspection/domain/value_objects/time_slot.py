@@ -77,3 +77,8 @@ class TimeSlot:
     def format_time_range(self) -> str:
         """Get formatted time range string."""
         return f"{self.start_time.strftime('%H:%M')} - {self.end_time.strftime('%H:%M')}"
+
+    @property
+    def time_range(self) -> str:
+        """Get formatted time range string as property."""
+        return self.format_time_range()

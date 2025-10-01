@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from ...infrastructure.database.connection import DatabaseManager
+from ...infrastructure.services import initialize_services, shutdown_services
 from .routes import health, vehicles, bookings, inspections
 from .config import get_settings
 
@@ -13,14 +13,12 @@ from .config import get_settings
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
     # Startup
-    settings = get_settings()
-    db_manager = DatabaseManager(settings.database_url)
-    await db_manager.connect()
+    await initialize_services()
 
     yield
 
     # Shutdown
-    await db_manager.disconnect()
+    await shutdown_services()
 
 
 def create_app() -> FastAPI:

@@ -1,17 +1,14 @@
-"""Booking endpoints."""
+"""Booking endpoints with database integration."""
 
 from datetime import datetime, date as Date
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, Query, Path
 from pydantic import BaseModel
 
-from src.vehicle_inspection.infrastructure.repositories.simple_booking_service import InMemoryBookingService
+from src.vehicle_inspection.infrastructure.services import get_service_factory
 
 router = APIRouter()
-
-# Global service instance (In production, this would be injected)
-booking_service = InMemoryBookingService()
 
 
 class BookingRequest(BaseModel):
@@ -55,6 +52,10 @@ class BookingActionRequest(BaseModel):
     user_id: Optional[UUID] = None
 
 
+# Test user ID for demo purposes
+TEST_USER_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
 @router.get("/available-slots")
 async def get_available_slots(
     date: str = Query(..., description="Date in YYYY-MM-DD format")
@@ -68,8 +69,10 @@ async def get_available_slots(
         if target_date < Date.today():
             raise HTTPException(status_code=400, detail="Cannot check availability for past dates")
 
-        # Get available slots
-        slots = await booking_service.get_available_slots(target_date)
+        # Get available slots using database service
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            slots = await booking_service.get_available_slots(target_date)
 
         # Convert to response format
         slot_responses = []
@@ -94,9 +97,9 @@ async def get_available_slots(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting available slots: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting available slots: {str(e)}") from e
 
 
 @router.post("/")
@@ -104,29 +107,31 @@ async def create_booking(request: BookingRequest) -> BookingResponse:
     """Create a new booking appointment."""
     try:
         # Use test user if no user_id provided
-        user_id = request.user_id or booking_service.get_test_user_id()
+        user_id = request.user_id or TEST_USER_ID
 
-        # Create booking
-        booking = await booking_service.create_booking(
-            license_plate=request.license_plate,
-            appointment_date=request.appointment_date,
-            user_id=user_id
-        )
+        # Create booking using database service
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            booking = await booking_service.request_appointment(
+                license_plate=request.license_plate,
+                appointment_date=request.appointment_date,
+                user_id=user_id
+            )
 
         return BookingResponse(
             id=booking.id,
             license_plate=booking.license_plate,
             appointment_date=booking.appointment_date,
             user_id=booking.user_id,
-            status=booking.status,
+            status=booking.status.value,
             created_at=booking.created_at,
             updated_at=booking.updated_at
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating booking: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating booking: {str(e)}") from e
 
 
 @router.get("/{booking_id}")
@@ -135,7 +140,10 @@ async def get_booking(
 ) -> BookingResponse:
     """Get booking by ID."""
     try:
-        booking = await booking_service.get_booking(booking_id)
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            booking = await booking_service.get_booking(booking_id)
+
         if not booking:
             raise HTTPException(status_code=404, detail="Booking not found")
 
@@ -144,7 +152,7 @@ async def get_booking(
             license_plate=booking.license_plate,
             appointment_date=booking.appointment_date,
             user_id=booking.user_id,
-            status=booking.status,
+            status=booking.status.value,
             created_at=booking.created_at,
             updated_at=booking.updated_at
         )
@@ -152,63 +160,71 @@ async def get_booking(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting booking: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting booking: {str(e)}") from e
 
 
-@router.put("/{booking_id}/confirm")
+@router.post("/{booking_id}/confirm")
 async def confirm_booking(
     booking_id: UUID = Path(..., description="Booking ID"),
     request: BookingActionRequest = BookingActionRequest()
 ) -> BookingResponse:
-    """Confirm a pending booking."""
+    """Confirm a booking."""
     try:
-        # Use test user if no user_id provided
-        user_id = request.user_id or booking_service.get_test_user_id()
+        user_id = request.user_id or TEST_USER_ID
 
-        booking = await booking_service.confirm_booking(booking_id, user_id)
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            booking = await booking_service.confirm_booking(booking_id, user_id)
+
+        if not booking:
+            raise HTTPException(status_code=404, detail="Booking not found")
 
         return BookingResponse(
             id=booking.id,
             license_plate=booking.license_plate,
             appointment_date=booking.appointment_date,
             user_id=booking.user_id,
-            status=booking.status,
+            status=booking.status.value,
             created_at=booking.created_at,
             updated_at=booking.updated_at
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error confirming booking: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error confirming booking: {str(e)}") from e
 
 
-@router.put("/{booking_id}/cancel")
+@router.post("/{booking_id}/cancel")
 async def cancel_booking(
     booking_id: UUID = Path(..., description="Booking ID"),
     request: BookingActionRequest = BookingActionRequest()
 ) -> BookingResponse:
     """Cancel a booking."""
     try:
-        # Use test user if no user_id provided
-        user_id = request.user_id or booking_service.get_test_user_id()
+        user_id = request.user_id or TEST_USER_ID
 
-        booking = await booking_service.cancel_booking(booking_id, user_id)
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            booking = await booking_service.cancel_booking(booking_id, user_id)
+
+        if not booking:
+            raise HTTPException(status_code=404, detail="Booking not found")
 
         return BookingResponse(
             id=booking.id,
             license_plate=booking.license_plate,
             appointment_date=booking.appointment_date,
             user_id=booking.user_id,
-            status=booking.status,
+            status=booking.status.value,
             created_at=booking.created_at,
             updated_at=booking.updated_at
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error cancelling booking: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error cancelling booking: {str(e)}") from e
 
 
 @router.get("/user/{user_id}")
@@ -217,7 +233,9 @@ async def get_user_bookings(
 ) -> List[BookingResponse]:
     """Get all bookings for a user."""
     try:
-        bookings = await booking_service.get_user_bookings(user_id)
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            bookings = await booking_service.get_user_bookings(user_id)
 
         return [
             BookingResponse(
@@ -225,7 +243,7 @@ async def get_user_bookings(
                 license_plate=booking.license_plate,
                 appointment_date=booking.appointment_date,
                 user_id=booking.user_id,
-                status=booking.status,
+                status=booking.status.value,
                 created_at=booking.created_at,
                 updated_at=booking.updated_at
             )
@@ -233,36 +251,56 @@ async def get_user_bookings(
         ]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting user bookings: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user bookings: {str(e)}") from e
 
 
-@router.get("/")
-async def list_bookings() -> dict:
-    """List all bookings (demo endpoint)."""
+@router.get("/demo/bookings")
+async def get_demo_bookings() -> List[BookingResponse]:
+    """Get demo bookings for testing (using test user)."""
     try:
-        # For demo, get test user bookings
-        test_user_id = booking_service.get_test_user_id()
-        bookings = await booking_service.get_user_bookings(test_user_id)
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            bookings = await booking_service.get_user_bookings(TEST_USER_ID)
 
-        booking_responses = [
+        return [
             BookingResponse(
                 id=booking.id,
                 license_plate=booking.license_plate,
                 appointment_date=booking.appointment_date,
                 user_id=booking.user_id,
-                status=booking.status,
+                status=booking.status.value,
                 created_at=booking.created_at,
                 updated_at=booking.updated_at
             )
             for booking in bookings
         ]
 
-        return {
-            "bookings": booking_responses,
-            "total_count": len(booking_responses),
-            "test_user_id": str(test_user_id),
-            "message": "Use test_user_id for demo operations"
-        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting demo bookings: {str(e)}") from e
+
+
+@router.get("/vehicle/{license_plate}")
+async def get_vehicle_bookings(
+    license_plate: str = Path(..., description="Vehicle license plate")
+) -> List[BookingResponse]:
+    """Get all bookings for a vehicle."""
+    try:
+        service_factory = get_service_factory()
+        async with service_factory.get_booking_service() as booking_service:
+            bookings = await booking_service.get_vehicle_bookings(license_plate)
+
+        return [
+            BookingResponse(
+                id=booking.id,
+                license_plate=booking.license_plate,
+                appointment_date=booking.appointment_date,
+                user_id=booking.user_id,
+                status=booking.status.value,
+                created_at=booking.created_at,
+                updated_at=booking.updated_at
+            )
+            for booking in bookings
+        ]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listing bookings: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting vehicle bookings: {str(e)}") from e
