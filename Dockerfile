@@ -10,8 +10,8 @@ WORKDIR /app
 # Copy dependency files
 COPY uv.lock pyproject.toml ./
 
-# Install dependencies only (not the project itself)
-RUN uv sync --locked --no-install-project
+# Install dependencies including dev dependencies for testing
+RUN uv sync --locked --no-install-project --all-extras
 
 # Production stage
 FROM python:3.10-slim

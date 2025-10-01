@@ -90,3 +90,9 @@ markers = [
     "integration: Integration tests",
     "slow: Slow running tests",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+]
