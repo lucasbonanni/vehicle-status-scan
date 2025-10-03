@@ -8,9 +8,12 @@ from src.vehicle_inspection.infrastructure.database.connection import DatabaseMa
 from src.vehicle_inspection.infrastructure.repositories.sql_repositories import (
     SQLAlchemyBookingRepository,
     SQLAlchemyVehicleRepository,
-    SQLAlchemyUserRepository
+    SQLAlchemyUserRepository,
+    SQLAlchemyInspectorRepository,
+    InMemoryAuthTokenRepository
 )
 from src.vehicle_inspection.application.services.booking_service import BookingService
+from src.vehicle_inspection.application.services.auth_service import AuthenticationService
 
 
 class ServiceFactory:
@@ -19,6 +22,8 @@ class ServiceFactory:
     def __init__(self, database_url: str):
         self.database_manager = DatabaseManager(database_url)
         self._connected = False
+        # Singleton token repository for in-memory storage
+        self._token_repository = InMemoryAuthTokenRepository()
 
     async def initialize(self):
         """Initialize the service factory."""
@@ -48,7 +53,20 @@ class ServiceFactory:
 
             yield service
 
+    @asynccontextmanager
+    async def get_auth_service(self) -> AsyncGenerator[AuthenticationService, None]:
+        """Get authentication service with database repositories."""
+        async with self.database_manager.get_session() as session:
+            inspector_repo = SQLAlchemyInspectorRepository(session)
+            # Using singleton token repository to persist tokens across requests
+            token_repo = self._token_repository
 
+            service = AuthenticationService(
+                inspector_repository=inspector_repo,
+                token_repository=token_repo
+            )
+
+            yield service
 # Global service factory instance
 _service_factory: ServiceFactory | None = None
 

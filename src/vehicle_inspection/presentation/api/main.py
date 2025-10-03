@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from ...infrastructure.services import initialize_services, shutdown_services
-from .routes import health, vehicles, bookings, inspections
+from .routes import health, vehicles, bookings, inspections, auth
 from .config import get_settings
 
 
@@ -45,6 +45,11 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(health.router, tags=["health"])
+    app.include_router(
+        auth.router,
+        prefix=f"{settings.api_prefix}/auth",
+        tags=["authentication"]
+    )
     app.include_router(
         vehicles.router,
         prefix=f"{settings.api_prefix}/vehicles",

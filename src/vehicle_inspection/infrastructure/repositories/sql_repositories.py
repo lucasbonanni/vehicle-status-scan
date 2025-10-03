@@ -8,11 +8,13 @@ from sqlalchemy import select, and_, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from src.vehicle_inspection.application.ports.repositories import BookingRepository, VehicleRepository, UserRepository
+from src.vehicle_inspection.application.ports.repositories import BookingRepository, VehicleRepository, UserRepository, InspectorRepository, AuthTokenRepository
 from src.vehicle_inspection.domain.entities.booking import Booking, BookingStatus
 from src.vehicle_inspection.domain.entities.vehicle import Vehicle, Car, Motorcycle
+from src.vehicle_inspection.domain.entities.inspector import Inspector, InspectorRole, InspectorStatus
 from src.vehicle_inspection.domain.value_objects.time_slot import TimeSlot
-from src.vehicle_inspection.infrastructure.database.models import BookingModel, TimeSlotModel, VehicleModel, UserModel
+from src.vehicle_inspection.domain.value_objects.auth import AuthToken
+from src.vehicle_inspection.infrastructure.database.models import BookingModel, TimeSlotModel, VehicleModel, UserModel, InspectorModel
 
 
 class SQLAlchemyBookingRepository(BookingRepository):
@@ -295,3 +297,220 @@ class SQLAlchemyUserRepository(UserRepository):
         count = result.scalar()
 
         return count > 0
+
+
+class SQLAlchemyInspectorRepository(InspectorRepository):
+    """SQLAlchemy implementation of inspector repository."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def save(self, inspector: Inspector) -> Inspector:
+        """Save an inspector to the database."""
+        # Check if inspector exists
+        stmt = select(InspectorModel).where(InspectorModel.id == inspector.id)
+        result = await self._session.execute(stmt)
+        existing_inspector = result.scalar_one_or_none()
+
+        if existing_inspector:
+            # Update existing inspector
+            existing_inspector.email = inspector.email
+            existing_inspector.first_name = inspector.first_name
+            existing_inspector.last_name = inspector.last_name
+            existing_inspector.phone = inspector.phone
+            existing_inspector.role = inspector.role
+            existing_inspector.license_number = inspector.license_number
+            existing_inspector.status = inspector.status
+            existing_inspector.hire_date = inspector.hire_date
+            existing_inspector.updated_at = datetime.utcnow()
+        else:
+            # Create new inspector
+            inspector_model = InspectorModel(
+                id=inspector.id,
+                email=inspector.email,
+                first_name=inspector.first_name,
+                last_name=inspector.last_name,
+                phone=inspector.phone,
+                role=inspector.role,
+                license_number=inspector.license_number,
+                status=inspector.status,
+                hire_date=inspector.hire_date,
+                password_hash="",  # Will be set separately
+                created_at=inspector.created_at,
+                updated_at=datetime.utcnow()
+            )
+            self._session.add(inspector_model)
+
+        await self._session.flush()
+        return inspector
+
+    async def find_by_id(self, inspector_id: UUID) -> Optional[Inspector]:
+        """Find inspector by ID."""
+        stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        inspector_model = result.scalar_one_or_none()
+
+        if not inspector_model:
+            return None
+
+        return self._model_to_entity(inspector_model)
+
+    async def find_by_email(self, email: str) -> Optional[Inspector]:
+        """Find inspector by email."""
+        stmt = select(InspectorModel).where(InspectorModel.email == email.lower().strip())
+        result = await self._session.execute(stmt)
+        inspector_model = result.scalar_one_or_none()
+
+        if not inspector_model:
+            return None
+
+        return self._model_to_entity(inspector_model)
+
+    async def find_by_license_number(self, license_number: str) -> Optional[Inspector]:
+        """Find inspector by license number."""
+        stmt = select(InspectorModel).where(InspectorModel.license_number == license_number.upper().strip())
+        result = await self._session.execute(stmt)
+        inspector_model = result.scalar_one_or_none()
+
+        if not inspector_model:
+            return None
+
+        return self._model_to_entity(inspector_model)
+
+    async def find_all_active(self) -> List[Inspector]:
+        """Find all active inspectors."""
+        stmt = select(InspectorModel).where(
+            InspectorModel.status == InspectorStatus.ACTIVE
+        ).order_by(InspectorModel.last_name, InspectorModel.first_name)
+
+        result = await self._session.execute(stmt)
+        inspector_models = result.scalars().all()
+
+        return [self._model_to_entity(model) for model in inspector_models]
+
+    async def update_password_hash(self, inspector_id: UUID, password_hash: str) -> bool:
+        """Update inspector password hash."""
+        stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        inspector_model = result.scalar_one_or_none()
+
+        if not inspector_model:
+            return False
+
+        inspector_model.password_hash = password_hash
+        inspector_model.updated_at = datetime.utcnow()
+        await self._session.flush()
+
+        return True
+
+    async def update_login_info(self, inspector_id: UUID, failed_attempts: int = 0, locked_until: Optional[datetime] = None) -> bool:
+        """Update inspector login information."""
+        stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        inspector_model = result.scalar_one_or_none()
+
+        if not inspector_model:
+            return False
+
+        inspector_model.failed_login_attempts = failed_attempts
+        inspector_model.locked_until = locked_until
+        inspector_model.updated_at = datetime.utcnow()
+        await self._session.flush()
+
+        return True
+
+    async def record_login(self, inspector_id: UUID) -> bool:
+        """Record successful login."""
+        stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        inspector_model = result.scalar_one_or_none()
+
+        if not inspector_model:
+            return False
+
+        inspector_model.last_login = datetime.utcnow()
+        inspector_model.failed_login_attempts = 0
+        inspector_model.locked_until = None
+        inspector_model.updated_at = datetime.utcnow()
+        await self._session.flush()
+
+        return True
+
+    async def get_password_hash(self, inspector_id: UUID) -> Optional[str]:
+        """Get password hash for inspector."""
+        stmt = select(InspectorModel.password_hash).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_failed_attempts(self, inspector_id: UUID) -> int:
+        """Get number of failed login attempts."""
+        stmt = select(InspectorModel.failed_login_attempts).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        failed_attempts = result.scalar_one_or_none()
+        return failed_attempts or 0
+
+    async def get_lockout_expiry(self, inspector_id: UUID) -> Optional[datetime]:
+        """Get account lockout expiry time."""
+        stmt = select(InspectorModel.locked_until).where(InspectorModel.id == inspector_id)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def _model_to_entity(self, model: InspectorModel) -> Inspector:
+        """Convert database model to domain entity."""
+        return Inspector(
+            inspector_id=model.id,
+            email=model.email,
+            first_name=model.first_name,
+            last_name=model.last_name,
+            role=model.role,
+            license_number=model.license_number,
+            status=model.status,
+            phone=model.phone,
+            hire_date=model.hire_date,
+            created_at=model.created_at,
+            updated_at=model.updated_at
+        )
+
+
+class InMemoryAuthTokenRepository(AuthTokenRepository):
+    """In-memory implementation of auth token repository for development."""
+
+    def __init__(self):
+        self._tokens: Dict[str, AuthToken] = {}
+
+    async def save_token(self, token: AuthToken) -> bool:
+        """Save authentication token."""
+        try:
+            self._tokens[token.token] = token
+            return True
+        except Exception:
+            return False
+
+    async def find_token(self, token: str) -> Optional[AuthToken]:
+        """Find authentication token."""
+        return self._tokens.get(token)
+
+    async def invalidate_token(self, token: str) -> bool:
+        """Invalidate authentication token."""
+        try:
+            if token in self._tokens:
+                del self._tokens[token]
+                return True
+            return False
+        except Exception:
+            return False
+
+    async def cleanup_expired_tokens(self) -> int:
+        """Clean up expired tokens."""
+        try:
+            expired_tokens = [
+                token for token, auth_token in self._tokens.items()
+                if auth_token.is_expired
+            ]
+
+            for token in expired_tokens:
+                del self._tokens[token]
+
+            return len(expired_tokens)
+        except Exception:
+            return 0

@@ -10,6 +10,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
 from src.vehicle_inspection.domain.entities.booking import BookingStatus
+from src.vehicle_inspection.domain.entities.inspector import InspectorRole, InspectorStatus
 
 Base = declarative_base()
 
@@ -112,3 +113,37 @@ class UserModel(Base):
 
     def __repr__(self) -> str:
         return f"<UserModel(id={self.id}, email='{self.email}', name='{self.first_name} {self.last_name}')>"
+
+
+class InspectorModel(Base):
+    """SQLAlchemy model for inspectors."""
+
+    __tablename__ = "inspectors"
+
+    # Primary key
+    id = Column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Inspector details
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    first_name = Column(String(100), nullable=False)
+    last_name = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=True)
+
+    # Inspector-specific fields
+    role = Column(SQLEnum(InspectorRole, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=InspectorRole.JUNIOR)
+    license_number = Column(String(50), nullable=False, unique=True, index=True)
+    status = Column(SQLEnum(InspectorStatus, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=InspectorStatus.ACTIVE)
+    hire_date = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Authentication fields
+    password_hash = Column(String(255), nullable=False)
+    last_login = Column(DateTime, nullable=True)
+    failed_login_attempts = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<InspectorModel(id={self.id}, email='{self.email}', name='{self.first_name} {self.last_name}', role='{self.role}')>"
