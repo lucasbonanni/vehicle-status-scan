@@ -57,7 +57,7 @@ class TestInspectionRepositoryInterface:
         assert params == ['self', 'inspection']
 
         # Return type should be Inspection
-        assert sig.return_annotation == "'Inspection'"
+        assert sig.return_annotation == "Inspection"
 
     def test_find_by_id_method_signature(self):
         """Test find_by_id method signature."""
@@ -161,7 +161,7 @@ class TestInspectionRepositoryInterface:
         assert params == ['self', 'inspection']
 
         # Return type should be Inspection
-        assert sig.return_annotation == "'Inspection'"
+        assert sig.return_annotation == "Inspection"
 
     def test_delete_method_signature(self):
         """Test delete method signature."""

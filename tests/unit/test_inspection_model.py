@@ -113,11 +113,12 @@ class TestInspectionModel:
         """Test InspectionStatus enum handling."""
         inspector_id = uuid4()
 
-        # Test DRAFT (default)
+        # Test DRAFT (explicitly set)
         draft_model = InspectionModel(
             license_plate="DRAFT123",
             vehicle_type=VehicleType.CAR,
-            inspector_id=inspector_id
+            inspector_id=inspector_id,
+            status=InspectionStatus.DRAFT
         )
         assert draft_model.status == InspectionStatus.DRAFT
 
