@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from src.vehicle_inspection.domain.entities.booking import Booking
     from src.vehicle_inspection.domain.entities.vehicle import Vehicle
     from src.vehicle_inspection.domain.entities.inspector import Inspector
+    from src.vehicle_inspection.domain.entities.inspection import Inspection
     from src.vehicle_inspection.domain.value_objects.time_slot import TimeSlot
     from src.vehicle_inspection.domain.value_objects.auth import AuthToken
 
@@ -170,4 +171,73 @@ class AuthTokenRepository(ABC):
     @abstractmethod
     async def cleanup_expired_tokens(self) -> int:
         """Clean up expired tokens."""
+        raise NotImplementedError
+
+
+class InspectionRepository(ABC):
+    """Port interface for inspection repository."""
+
+    @abstractmethod
+    async def save(self, inspection: "Inspection") -> "Inspection":
+        """Save an inspection (create or update)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_by_id(self, inspection_id: UUID) -> Optional["Inspection"]:
+        """Find inspection by ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_by_license_plate(self, license_plate: str) -> List["Inspection"]:
+        """Find all inspections for a license plate (ordered by created_at DESC)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_latest_by_license_plate(self, license_plate: str) -> Optional["Inspection"]:
+        """Find the most recent inspection for a license plate."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_by_inspector(self, inspector_id: UUID) -> List["Inspection"]:
+        """Find all inspections performed by a specific inspector."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_by_status(self, status: str) -> List["Inspection"]:
+        """Find all inspections with a specific status (draft/completed)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_completed_inspections(self, limit: Optional[int] = None) -> List["Inspection"]:
+        """Find completed inspections, optionally limited by count."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find_draft_inspections_by_inspector(self, inspector_id: UUID) -> List["Inspection"]:
+        """Find all draft inspections for a specific inspector."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update(self, inspection: "Inspection") -> "Inspection":
+        """Update an existing inspection."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete(self, inspection_id: UUID) -> bool:
+        """Delete an inspection by ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def exists(self, inspection_id: UUID) -> bool:
+        """Check if an inspection exists."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def count_by_inspector(self, inspector_id: UUID) -> int:
+        """Count total inspections by inspector."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def count_by_license_plate(self, license_plate: str) -> int:
+        """Count total inspections for a license plate."""
         raise NotImplementedError
