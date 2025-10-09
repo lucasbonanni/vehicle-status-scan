@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 import logging
 
 from ...infrastructure.services import initialize_services, shutdown_services
+from ...infrastructure.logging import setup_logging_from_env
 from .routes import health, vehicles, bookings, inspections, auth, reports
 from .config import get_settings
 from .middleware.auth import AuthenticationError, AuthorizationError
+from .middleware.logging import create_logging_middleware
 
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
     # Startup
+    # Configure structured logging first
+    setup_logging_from_env()
     logger.info("Starting Vehicle Inspection System API")
     await initialize_services()
 
@@ -97,6 +101,14 @@ def create_app() -> FastAPI:
 
     # Add custom exception handlers
     add_exception_handlers(app)
+
+    # Add request/response logging middleware (first to capture all requests)
+    logging_middleware = create_logging_middleware(
+        log_request_body=settings.log_request_body,
+        log_response_body=settings.log_response_body,
+        max_body_size=settings.max_log_body_size
+    )
+    app.add_middleware(logging_middleware)
 
     # CORS middleware
     app.add_middleware(

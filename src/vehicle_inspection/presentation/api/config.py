@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
 
+    # Logging
+    log_request_body: bool = False
+    log_response_body: bool = False
+    max_log_body_size: int = 1024
+
     # CORS
     allowed_origins: Union[str, List[str]] = "http://localhost:3000,http://localhost:8080"
     allowed_methods: Union[str, List[str]] = "GET,POST,PUT,DELETE,OPTIONS"
