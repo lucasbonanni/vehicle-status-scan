@@ -4,13 +4,15 @@ from datetime import datetime
 from typing import List
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, String, DateTime, Boolean, Integer, Text, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, Boolean, Integer, Text, Enum as SQLEnum, ForeignKey, JSON, Numeric
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
 from src.vehicle_inspection.domain.entities.booking import BookingStatus
 from src.vehicle_inspection.domain.entities.inspector import InspectorRole, InspectorStatus
+from src.vehicle_inspection.domain.entities.inspection import InspectionStatus
+from src.vehicle_inspection.domain.entities.vehicle import VehicleType
 
 Base = declarative_base()
 
@@ -147,3 +149,44 @@ class InspectorModel(Base):
 
     def __repr__(self) -> str:
         return f"<InspectorModel(id={self.id}, email='{self.email}', name='{self.first_name} {self.last_name}', role='{self.role}')>"
+
+
+class InspectionModel(Base):
+    """SQLAlchemy model for vehicle inspections."""
+
+    __tablename__ = "inspections"
+
+    # Primary key
+    id = Column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Inspection identification
+    license_plate = Column(String(20), nullable=False, index=True)  # Not unique - allows multiple inspections per vehicle
+    vehicle_type = Column(SQLEnum(VehicleType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
+
+    # Inspector reference
+    inspector_id = Column(PostgresUUID(as_uuid=True), ForeignKey('inspectors.id'), nullable=False, index=True)
+
+    # Checkpoint scores (stored as JSON)
+    checkpoint_scores = Column(JSON, nullable=True)  # JSON array of checkpoint score objects
+
+    # Calculated safety metrics
+    total_score = Column(Numeric(precision=5, scale=2), nullable=True)  # Total score calculated from checkpoints
+    is_safe = Column(Boolean, nullable=True)  # Whether vehicle is safe (≥80 total score)
+    requires_reinspection = Column(Boolean, nullable=True)  # Whether vehicle requires reinspection
+
+    # Inspector observations
+    observations = Column(Text, nullable=False, default="")
+
+    # Inspection status
+    status = Column(SQLEnum(InspectionStatus, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=InspectionStatus.DRAFT)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)  # When inspection was completed
+
+    # Relationships
+    inspector = relationship("InspectorModel", backref="inspections")
+
+    def __repr__(self) -> str:
+        return f"<InspectionModel(id={self.id}, license_plate='{self.license_plate}', status='{self.status}', inspector_id={self.inspector_id})>"
