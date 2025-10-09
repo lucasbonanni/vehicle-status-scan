@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from ...infrastructure.services import initialize_services, shutdown_services
-from .routes import health, vehicles, bookings, inspections, auth
+from .routes import health, vehicles, bookings, inspections, auth, reports
 from .config import get_settings
 from .middleware.auth import AuthenticationError, AuthorizationError
 
@@ -128,6 +128,11 @@ def create_app() -> FastAPI:
         inspections.router,
         prefix=f"{settings.api_prefix}/inspections",
         tags=["inspections"]
+    )
+    app.include_router(
+        reports.router,
+        prefix=f"{settings.api_prefix}/reports",
+        tags=["reports"]
     )
 
     return app
