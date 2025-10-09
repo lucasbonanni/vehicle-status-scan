@@ -1,20 +1,24 @@
 """SQLAlchemy repository implementations."""
 
+import json
 from datetime import datetime, date, time, timedelta
 from typing import List, Optional, Dict
 from uuid import UUID
 
-from sqlalchemy import select, and_, func, delete
+from sqlalchemy import select, and_, func, delete, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from src.vehicle_inspection.application.ports.repositories import BookingRepository, VehicleRepository, UserRepository, InspectorRepository, AuthTokenRepository
+from src.vehicle_inspection.application.ports.repositories import BookingRepository, VehicleRepository, UserRepository, InspectorRepository, AuthTokenRepository, InspectionRepository
 from src.vehicle_inspection.domain.entities.booking import Booking, BookingStatus
 from src.vehicle_inspection.domain.entities.vehicle import Vehicle, Car, Motorcycle
 from src.vehicle_inspection.domain.entities.inspector import Inspector, InspectorRole, InspectorStatus
+from src.vehicle_inspection.domain.entities.inspection import Inspection, InspectionStatus
 from src.vehicle_inspection.domain.value_objects.time_slot import TimeSlot
 from src.vehicle_inspection.domain.value_objects.auth import AuthToken
-from src.vehicle_inspection.infrastructure.database.models import BookingModel, TimeSlotModel, VehicleModel, UserModel, InspectorModel
+from src.vehicle_inspection.domain.value_objects.checkpoint_score import CheckpointScore
+from src.vehicle_inspection.domain.value_objects.checkpoint_types import CheckpointType
+from src.vehicle_inspection.infrastructure.database.models import BookingModel, TimeSlotModel, VehicleModel, UserModel, InspectorModel, InspectionModel
 
 
 class SQLAlchemyBookingRepository(BookingRepository):
@@ -470,6 +474,253 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             created_at=model.created_at,
             updated_at=model.updated_at
         )
+
+
+class SQLAlchemyInspectionRepository(InspectionRepository):
+    """SQLAlchemy implementation of inspection repository."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def save(self, inspection: Inspection) -> Inspection:
+        """Save an inspection to the database."""
+        # Check if inspection exists
+        stmt = select(InspectionModel).where(InspectionModel.id == inspection.id)
+        result = await self._session.execute(stmt)
+        existing_inspection = result.scalar_one_or_none()
+
+        if existing_inspection:
+            # Update existing inspection
+            self._update_model_from_entity(existing_inspection, inspection)
+            existing_inspection.updated_at = datetime.utcnow()
+        else:
+            # Create new inspection
+            inspection_model = self._entity_to_model(inspection)
+            self._session.add(inspection_model)
+
+        await self._session.flush()
+        return inspection
+
+    async def find_by_id(self, inspection_id: UUID) -> Optional[Inspection]:
+        """Find inspection by ID."""
+        stmt = select(InspectionModel).where(InspectionModel.id == inspection_id)
+        result = await self._session.execute(stmt)
+        inspection_model = result.scalar_one_or_none()
+
+        if not inspection_model:
+            return None
+
+        return self._model_to_entity(inspection_model)
+
+    async def find_by_license_plate(self, license_plate: str) -> List[Inspection]:
+        """Find all inspections for a license plate (ordered by created_at DESC)."""
+        normalized_plate = license_plate.upper().replace(" ", "").replace("-", "")
+
+        stmt = select(InspectionModel).where(
+            InspectionModel.license_plate == normalized_plate
+        ).order_by(desc(InspectionModel.created_at))
+
+        result = await self._session.execute(stmt)
+        inspection_models = result.scalars().all()
+
+        return [self._model_to_entity(model) for model in inspection_models]
+
+    async def find_latest_by_license_plate(self, license_plate: str) -> Optional[Inspection]:
+        """Find the most recent inspection for a license plate."""
+        normalized_plate = license_plate.upper().replace(" ", "").replace("-", "")
+
+        stmt = select(InspectionModel).where(
+            InspectionModel.license_plate == normalized_plate
+        ).order_by(desc(InspectionModel.created_at)).limit(1)
+
+        result = await self._session.execute(stmt)
+        inspection_model = result.scalar_one_or_none()
+
+        if not inspection_model:
+            return None
+
+        return self._model_to_entity(inspection_model)
+
+    async def find_by_inspector(self, inspector_id: UUID) -> List[Inspection]:
+        """Find all inspections performed by a specific inspector."""
+        stmt = select(InspectionModel).where(
+            InspectionModel.inspector_id == inspector_id
+        ).order_by(desc(InspectionModel.created_at))
+
+        result = await self._session.execute(stmt)
+        inspection_models = result.scalars().all()
+
+        return [self._model_to_entity(model) for model in inspection_models]
+
+    async def find_by_status(self, status: str) -> List[Inspection]:
+        """Find all inspections with a specific status (draft/completed)."""
+        stmt = select(InspectionModel).where(
+            InspectionModel.status == InspectionStatus(status)
+        ).order_by(desc(InspectionModel.created_at))
+
+        result = await self._session.execute(stmt)
+        inspection_models = result.scalars().all()
+
+        return [self._model_to_entity(model) for model in inspection_models]
+
+    async def find_completed_inspections(self, limit: Optional[int] = None) -> List[Inspection]:
+        """Find completed inspections, optionally limited by count."""
+        stmt = select(InspectionModel).where(
+            InspectionModel.status == InspectionStatus.COMPLETED
+        ).order_by(desc(InspectionModel.completed_at))
+
+        if limit:
+            stmt = stmt.limit(limit)
+
+        result = await self._session.execute(stmt)
+        inspection_models = result.scalars().all()
+
+        return [self._model_to_entity(model) for model in inspection_models]
+
+    async def find_draft_inspections_by_inspector(self, inspector_id: UUID) -> List[Inspection]:
+        """Find all draft inspections for a specific inspector."""
+        stmt = select(InspectionModel).where(
+            and_(
+                InspectionModel.inspector_id == inspector_id,
+                InspectionModel.status == InspectionStatus.DRAFT
+            )
+        ).order_by(desc(InspectionModel.updated_at))
+
+        result = await self._session.execute(stmt)
+        inspection_models = result.scalars().all()
+
+        return [self._model_to_entity(model) for model in inspection_models]
+
+    async def update(self, inspection: Inspection) -> Inspection:
+        """Update an existing inspection."""
+        stmt = select(InspectionModel).where(InspectionModel.id == inspection.id)
+        result = await self._session.execute(stmt)
+        inspection_model = result.scalar_one_or_none()
+
+        if not inspection_model:
+            raise ValueError(f"Inspection with ID {inspection.id} not found")
+
+        self._update_model_from_entity(inspection_model, inspection)
+        inspection_model.updated_at = datetime.utcnow()
+
+        await self._session.flush()
+        return inspection
+
+    async def delete(self, inspection_id: UUID) -> bool:
+        """Delete an inspection by ID."""
+        stmt = delete(InspectionModel).where(InspectionModel.id == inspection_id)
+        result = await self._session.execute(stmt)
+
+        return result.rowcount > 0
+
+    async def exists(self, inspection_id: UUID) -> bool:
+        """Check if an inspection exists."""
+        stmt = select(func.count(InspectionModel.id)).where(
+            InspectionModel.id == inspection_id
+        )
+        result = await self._session.execute(stmt)
+        count = result.scalar()
+
+        return count > 0
+
+    async def count_by_inspector(self, inspector_id: UUID) -> int:
+        """Count total inspections by inspector."""
+        stmt = select(func.count(InspectionModel.id)).where(
+            InspectionModel.inspector_id == inspector_id
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_by_license_plate(self, license_plate: str) -> int:
+        """Count total inspections for a license plate."""
+        normalized_plate = license_plate.upper().replace(" ", "").replace("-", "")
+
+        stmt = select(func.count(InspectionModel.id)).where(
+            InspectionModel.license_plate == normalized_plate
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar() or 0
+
+    def _model_to_entity(self, model: InspectionModel) -> Inspection:
+        """Convert database model to domain entity."""
+        # Deserialize checkpoint scores from JSON
+        checkpoint_scores = []
+        if model.checkpoint_scores:
+            scores_data = json.loads(model.checkpoint_scores) if isinstance(model.checkpoint_scores, str) else model.checkpoint_scores
+            for score_data in scores_data:
+                checkpoint_scores.append(CheckpointScore(
+                    checkpoint_type=CheckpointType(score_data['checkpoint_type']),
+                    score=score_data['score'],
+                    notes=score_data.get('notes', '')
+                ))
+
+        return Inspection(
+            license_plate=model.license_plate,
+            vehicle_type=model.vehicle_type,
+            inspector_id=model.inspector_id,
+            inspection_id=model.id,
+            checkpoint_scores=checkpoint_scores,
+            observations=model.observations or "",
+            status=model.status,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+            completed_at=model.completed_at
+        )
+
+    def _entity_to_model(self, inspection: Inspection) -> InspectionModel:
+        """Convert domain entity to database model."""
+        # Serialize checkpoint scores to JSON
+        checkpoint_scores_json = None
+        if inspection.checkpoint_scores:
+            scores_data = []
+            for score in inspection.checkpoint_scores:
+                scores_data.append({
+                    'checkpoint_type': score.checkpoint_type.value,
+                    'score': score.score,
+                    'notes': score.notes
+                })
+            checkpoint_scores_json = json.dumps(scores_data)
+
+        return InspectionModel(
+            id=inspection.id,
+            license_plate=inspection.license_plate.upper().replace(" ", "").replace("-", ""),
+            vehicle_type=inspection.vehicle_type,
+            inspector_id=inspection.inspector_id,
+            checkpoint_scores=checkpoint_scores_json,
+            total_score=inspection.get_total_score() if inspection.checkpoint_scores else None,
+            is_safe=inspection.is_safe() if inspection.checkpoint_scores else None,
+            requires_reinspection=inspection.requires_reinspection() if inspection.checkpoint_scores else None,
+            observations=inspection.observations,
+            status=inspection.status,
+            created_at=inspection.created_at,
+            updated_at=inspection.updated_at,
+            completed_at=inspection.completed_at
+        )
+
+    def _update_model_from_entity(self, model: InspectionModel, inspection: Inspection) -> None:
+        """Update database model fields from domain entity."""
+        # Serialize checkpoint scores to JSON
+        checkpoint_scores_json = None
+        if inspection.checkpoint_scores:
+            scores_data = []
+            for score in inspection.checkpoint_scores:
+                scores_data.append({
+                    'checkpoint_type': score.checkpoint_type.value,
+                    'score': score.score,
+                    'notes': score.notes
+                })
+            checkpoint_scores_json = json.dumps(scores_data)
+
+        model.license_plate = inspection.license_plate.upper().replace(" ", "").replace("-", "")
+        model.vehicle_type = inspection.vehicle_type
+        model.inspector_id = inspection.inspector_id
+        model.checkpoint_scores = checkpoint_scores_json
+        model.total_score = inspection.get_total_score() if inspection.checkpoint_scores else None
+        model.is_safe = inspection.is_safe() if inspection.checkpoint_scores else None
+        model.requires_reinspection = inspection.requires_reinspection() if inspection.checkpoint_scores else None
+        model.observations = inspection.observations
+        model.status = inspection.status
+        model.completed_at = inspection.completed_at
 
 
 class InMemoryAuthTokenRepository(AuthTokenRepository):
