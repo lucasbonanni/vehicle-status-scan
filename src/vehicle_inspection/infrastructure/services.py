@@ -10,10 +10,12 @@ from src.vehicle_inspection.infrastructure.repositories.sql_repositories import 
     SQLAlchemyVehicleRepository,
     SQLAlchemyUserRepository,
     SQLAlchemyInspectorRepository,
+    SQLAlchemyInspectionRepository,
     InMemoryAuthTokenRepository
 )
 from src.vehicle_inspection.application.services.booking_service import BookingService
 from src.vehicle_inspection.application.services.auth_service import AuthenticationService
+from src.vehicle_inspection.application.services.inspection_service import InspectionService
 
 
 class ServiceFactory:
@@ -67,6 +69,22 @@ class ServiceFactory:
             )
 
             yield service
+
+    @asynccontextmanager
+    async def get_inspection_service(self) -> AsyncGenerator[InspectionService, None]:
+        """Get inspection service with database repositories."""
+        async with self.database_manager.get_session() as session:
+            inspection_repo = SQLAlchemyInspectionRepository(session)
+            inspector_repo = SQLAlchemyInspectorRepository(session)
+
+            service = InspectionService(
+                inspection_repository=inspection_repo,
+                inspector_repository=inspector_repo
+            )
+
+            yield service
+
+
 # Global service factory instance
 _service_factory: ServiceFactory | None = None
 
