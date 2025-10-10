@@ -11,6 +11,11 @@ from src.vehicle_inspection.domain.value_objects.auth import (
     PasswordHasher,
     TokenGenerator
 )
+from src.vehicle_inspection.infrastructure.logging import (
+    get_logger,
+    log_authentication_attempt,
+    log_business_rule_violation
+)
 
 if TYPE_CHECKING:
     from src.vehicle_inspection.application.ports.repositories import InspectorRepository, AuthTokenRepository
@@ -32,14 +37,19 @@ class AuthenticationService:
     ):
         self._inspector_repository = inspector_repository
         self._token_repository = token_repository
+        self._logger = get_logger(__name__)
 
     async def login(self, credentials: LoginCredentials) -> LoginResult:
         """Authenticate inspector and return login result."""
+        email = credentials.email.lower().strip()
+        self._logger.info(f"Login attempt for email: {email}")
+
         try:
             # Find inspector by email
-            inspector = await self._inspector_repository.find_by_email(credentials.email.lower().strip())
+            inspector = await self._inspector_repository.find_by_email(email)
 
             if not inspector:
+                log_authentication_attempt(self._logger, email, False, failure_reason="inspector_not_found")
                 return LoginResult(
                     success=False,
                     error_message="Invalid email or password"
@@ -47,6 +57,9 @@ class AuthenticationService:
 
             # Check if account is locked
             if await self._is_account_locked(inspector):
+                log_authentication_attempt(self._logger, email, False,
+                                          failure_reason="account_locked",
+                                          inspector_id=str(inspector.id))
                 return LoginResult(
                     success=False,
                     error_message="Account is temporarily locked due to too many failed login attempts",
@@ -55,6 +68,9 @@ class AuthenticationService:
 
             # Check if inspector is active
             if not inspector.can_perform_inspections():
+                log_authentication_attempt(self._logger, email, False,
+                                          failure_reason="account_inactive",
+                                          inspector_id=str(inspector.id))
                 return LoginResult(
                     success=False,
                     error_message="Account is not active"
@@ -64,6 +80,10 @@ class AuthenticationService:
             password_hash = await self._get_password_hash(inspector.id)
 
             if not password_hash:
+                self._logger.error(f"No password hash found for inspector {inspector.id}")
+                log_authentication_attempt(self._logger, email, False,
+                                          failure_reason="no_password_hash",
+                                          inspector_id=str(inspector.id))
                 return LoginResult(
                     success=False,
                     error_message="Authentication error"
@@ -78,6 +98,11 @@ class AuthenticationService:
 
                 if failed_attempts >= self.MAX_FAILED_ATTEMPTS:
                     lockout_expiry = await self._lock_account(inspector.id)
+                    self._logger.warning(f"Account locked for inspector {inspector.id} after {failed_attempts} failed attempts")
+                    log_authentication_attempt(self._logger, email, False,
+                                              failure_reason="account_locked_after_failures",
+                                              inspector_id=str(inspector.id),
+                                              failed_attempts=failed_attempts)
                     return LoginResult(
                         success=False,
                         error_message="Account locked due to too many failed login attempts",
@@ -85,6 +110,10 @@ class AuthenticationService:
                         failed_attempts=failed_attempts
                     )
 
+                log_authentication_attempt(self._logger, email, False,
+                                          failure_reason="invalid_password",
+                                          inspector_id=str(inspector.id),
+                                          failed_attempts=failed_attempts)
                 return LoginResult(
                     success=False,
                     error_message="Invalid email or password",
@@ -104,6 +133,11 @@ class AuthenticationService:
             # Save token
             await self._token_repository.save_token(auth_token)
 
+            self._logger.info(f"Successful login for inspector {inspector.id} with token expiry {auth_token.expires_at}")
+            log_authentication_attempt(self._logger, email, True,
+                                      inspector_id=str(inspector.id),
+                                      token_expires_at=auth_token.expires_at.isoformat())
+
             return LoginResult(
                 success=True,
                 inspector_id=inspector.id,
@@ -111,6 +145,10 @@ class AuthenticationService:
             )
 
         except Exception as e:
+            self._logger.error(f"Login error for {email}: {str(e)}", exc_info=True)
+            log_authentication_attempt(self._logger, email, False,
+                                      failure_reason="service_error",
+                                      error=str(e))
             return LoginResult(
                 success=False,
                 error_message="Authentication service error"
@@ -122,25 +160,43 @@ class AuthenticationService:
             # Find token
             auth_token = await self._token_repository.find_token(token)
 
-            if not auth_token or auth_token.is_expired:
+            if not auth_token:
+                self._logger.debug("Token not found in repository")
+                return None
+
+            if auth_token.is_expired:
+                self._logger.debug(f"Token expired for inspector {auth_token.inspector_id}")
                 return None
 
             # Find inspector
             inspector = await self._inspector_repository.find_by_id(auth_token.inspector_id)
 
-            if not inspector or not inspector.can_perform_inspections():
+            if not inspector:
+                self._logger.warning(f"Inspector {auth_token.inspector_id} not found for valid token")
                 return None
 
+            if not inspector.can_perform_inspections():
+                self._logger.debug(f"Inspector {auth_token.inspector_id} cannot perform inspections")
+                return None
+
+            self._logger.debug(f"Token validated successfully for inspector {inspector.id}")
             return inspector
 
-        except Exception:
+        except Exception as e:
+            self._logger.error(f"Token validation error: {str(e)}", exc_info=True)
             return None
 
     async def logout(self, token: str) -> bool:
         """Logout inspector by invalidating token."""
         try:
-            return await self._token_repository.invalidate_token(token)
-        except Exception:
+            success = await self._token_repository.invalidate_token(token)
+            if success:
+                self._logger.info("Inspector logged out successfully")
+            else:
+                self._logger.warning("Logout failed - token not found or already invalid")
+            return success
+        except Exception as e:
+            self._logger.error(f"Logout error: {str(e)}", exc_info=True)
             return False
 
     async def change_password(self, inspector_id: UUID, old_password: str, new_password: str) -> bool:

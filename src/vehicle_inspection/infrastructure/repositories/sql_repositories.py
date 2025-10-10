@@ -9,6 +9,11 @@ from sqlalchemy import select, and_, func, delete, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
+from src.vehicle_inspection.infrastructure.logging import (
+    get_logger,
+    log_database_operation
+)
+
 from src.vehicle_inspection.application.ports.repositories import BookingRepository, VehicleRepository, UserRepository, InspectorRepository, AuthTokenRepository, InspectionRepository
 from src.vehicle_inspection.domain.entities.booking import Booking, BookingStatus
 from src.vehicle_inspection.domain.entities.vehicle import Vehicle, Car, Motorcycle
@@ -90,8 +95,15 @@ class SQLAlchemyBookingRepository(BookingRepository):
 
         return [self._model_to_entity(model) for model in booking_models]
 
-    async def find_available_slots(self, target_date: date) -> List[TimeSlot]:
-        """Find available time slots for a specific date."""
+    async def get_available_slots(self, target_date: date) -> List[TimeSlot]:
+        """Get available time slots for a specific date."""
+        log_database_operation(
+            self._logger,
+            "SELECT",
+            "TimeSlotModel",
+            extra={"target_date": str(target_date)}
+        )
+
         # First, try to get existing time slots from database
         start_of_day = datetime.combine(target_date, time.min)
         end_of_day = datetime.combine(target_date, time.max)
@@ -109,13 +121,28 @@ class SQLAlchemyBookingRepository(BookingRepository):
 
         if slot_models:
             # Return existing slots from database
+            self._logger.debug(
+                "Found existing time slots in database",
+                extra={"slot_count": len(slot_models), "date": str(target_date)}
+            )
             return [self._slot_model_to_value_object(model) for model in slot_models]
         else:
             # Generate default slots if none exist
+            self._logger.info(
+                "No existing slots found, generating default slots",
+                extra={"date": str(target_date)}
+            )
             return self._generate_default_slots(target_date)
 
     async def is_slot_available(self, appointment_date: datetime) -> bool:
         """Check if a specific datetime slot is available."""
+        log_database_operation(
+            self._logger,
+            "SELECT",
+            "BookingModel",
+            extra={"appointment_date": str(appointment_date), "operation": "availability_check"}
+        )
+
         # Check if there are any conflicting bookings
         stmt = select(func.count(BookingModel.id)).where(
             and_(
@@ -128,14 +155,42 @@ class SQLAlchemyBookingRepository(BookingRepository):
         booking_count = result.scalar()
 
         # For now, assume max 1 booking per slot
-        return booking_count < 1
+        is_available = booking_count < 1
+        self._logger.debug(
+            "Slot availability check completed",
+            extra={
+                "appointment_date": str(appointment_date),
+                "booking_count": booking_count,
+                "is_available": is_available
+            }
+        )
+        return is_available
 
     async def delete(self, booking_id: UUID) -> bool:
         """Delete a booking."""
+        log_database_operation(
+            self._logger,
+            "DELETE",
+            "BookingModel",
+            extra={"booking_id": str(booking_id)}
+        )
+
         stmt = delete(BookingModel).where(BookingModel.id == booking_id)
         result = await self._session.execute(stmt)
 
-        return result.rowcount > 0
+        success = result.rowcount > 0
+        if success:
+            self._logger.info(
+                "Booking deleted successfully",
+                extra={"booking_id": str(booking_id), "rows_affected": result.rowcount}
+            )
+        else:
+            self._logger.warning(
+                "Booking deletion failed - not found",
+                extra={"booking_id": str(booking_id)}
+            )
+
+        return success
 
     def _model_to_entity(self, model: BookingModel) -> Booking:
         """Convert database model to domain entity."""
@@ -308,6 +363,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
     def __init__(self, session: AsyncSession):
         self._session = session
+        self._logger = get_logger(__name__)
 
     async def save(self, inspector: Inspector) -> Inspector:
         """Save an inspector to the database."""
@@ -318,6 +374,13 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
         if existing_inspector:
             # Update existing inspector
+            log_database_operation(
+                self._logger,
+                "UPDATE",
+                "InspectorModel",
+                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+            )
+
             existing_inspector.email = inspector.email
             existing_inspector.first_name = inspector.first_name
             existing_inspector.last_name = inspector.last_name
@@ -327,8 +390,20 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             existing_inspector.status = inspector.status
             existing_inspector.hire_date = inspector.hire_date
             existing_inspector.updated_at = datetime.utcnow()
+
+            self._logger.info(
+                "Inspector updated successfully",
+                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+            )
         else:
             # Create new inspector
+            log_database_operation(
+                self._logger,
+                "INSERT",
+                "InspectorModel",
+                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+            )
+
             inspector_model = InspectorModel(
                 id=inspector.id,
                 email=inspector.email,
@@ -345,44 +420,103 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             )
             self._session.add(inspector_model)
 
+            self._logger.info(
+                "New inspector created successfully",
+                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+            )
+
         await self._session.flush()
         return inspector
 
     async def find_by_id(self, inspector_id: UUID) -> Optional[Inspector]:
         """Find inspector by ID."""
+        log_database_operation(
+            self._logger,
+            "SELECT",
+            "InspectorModel",
+            extra={"inspector_id": str(inspector_id), "lookup_field": "id"}
+        )
+
         stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
         result = await self._session.execute(stmt)
         inspector_model = result.scalar_one_or_none()
 
         if not inspector_model:
+            self._logger.debug(
+                "Inspector not found by ID",
+                extra={"inspector_id": str(inspector_id)}
+            )
             return None
 
+        self._logger.debug(
+            "Inspector found by ID",
+            extra={"inspector_id": str(inspector_id), "email": inspector_model.email}
+        )
         return self._model_to_entity(inspector_model)
 
     async def find_by_email(self, email: str) -> Optional[Inspector]:
         """Find inspector by email."""
-        stmt = select(InspectorModel).where(InspectorModel.email == email.lower().strip())
+        sanitized_email = email.lower().strip()
+        log_database_operation(
+            self._logger,
+            "SELECT",
+            "InspectorModel",
+            extra={"email": sanitized_email, "lookup_field": "email"}
+        )
+
+        stmt = select(InspectorModel).where(InspectorModel.email == sanitized_email)
         result = await self._session.execute(stmt)
         inspector_model = result.scalar_one_or_none()
 
         if not inspector_model:
+            self._logger.debug(
+                "Inspector not found by email",
+                extra={"email": sanitized_email}
+            )
             return None
 
+        self._logger.debug(
+            "Inspector found by email",
+            extra={"email": sanitized_email, "inspector_id": str(inspector_model.id)}
+        )
         return self._model_to_entity(inspector_model)
 
     async def find_by_license_number(self, license_number: str) -> Optional[Inspector]:
         """Find inspector by license number."""
-        stmt = select(InspectorModel).where(InspectorModel.license_number == license_number.upper().strip())
+        sanitized_license = license_number.upper().strip()
+        log_database_operation(
+            self._logger,
+            "SELECT",
+            "InspectorModel",
+            extra={"license_number": sanitized_license, "lookup_field": "license_number"}
+        )
+
+        stmt = select(InspectorModel).where(InspectorModel.license_number == sanitized_license)
         result = await self._session.execute(stmt)
         inspector_model = result.scalar_one_or_none()
 
         if not inspector_model:
+            self._logger.debug(
+                "Inspector not found by license number",
+                extra={"license_number": sanitized_license}
+            )
             return None
 
+        self._logger.debug(
+            "Inspector found by license number",
+            extra={"license_number": sanitized_license, "inspector_id": str(inspector_model.id)}
+        )
         return self._model_to_entity(inspector_model)
 
     async def find_all_active(self) -> List[Inspector]:
         """Find all active inspectors."""
+        log_database_operation(
+            self._logger,
+            "SELECT",
+            "InspectorModel",
+            extra={"filter": "status=ACTIVE", "operation": "find_all_active"}
+        )
+
         stmt = select(InspectorModel).where(
             InspectorModel.status == InspectorStatus.ACTIVE
         ).order_by(InspectorModel.last_name, InspectorModel.first_name)
@@ -390,6 +524,10 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
         result = await self._session.execute(stmt)
         inspector_models = result.scalars().all()
 
+        self._logger.info(
+            "Found active inspectors",
+            extra={"count": len(inspector_models)}
+        )
         return [self._model_to_entity(model) for model in inspector_models]
 
     async def update_password_hash(self, inspector_id: UUID, password_hash: str) -> bool:
@@ -481,6 +619,7 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
     def __init__(self, session: AsyncSession):
         self._session = session
+        self._logger = get_logger(__name__)
 
     async def save(self, inspection: Inspection) -> Inspection:
         """Save an inspection to the database."""
@@ -491,10 +630,16 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
         if existing_inspection:
             # Update existing inspection
+            log_database_operation(self._logger, "UPDATE", "inspections",
+                                 inspection_id=str(inspection.id),
+                                 license_plate=inspection.license_plate)
             self._update_model_from_entity(existing_inspection, inspection)
             existing_inspection.updated_at = datetime.utcnow()
         else:
             # Create new inspection
+            log_database_operation(self._logger, "INSERT", "inspections",
+                                 inspection_id=str(inspection.id),
+                                 license_plate=inspection.license_plate)
             inspection_model = self._entity_to_model(inspection)
             self._session.add(inspection_model)
 
@@ -503,6 +648,8 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
     async def find_by_id(self, inspection_id: UUID) -> Optional[Inspection]:
         """Find inspection by ID."""
+        log_database_operation(self._logger, "SELECT", "inspections",
+                             inspection_id=str(inspection_id))
         stmt = select(InspectionModel).where(InspectionModel.id == inspection_id)
         result = await self._session.execute(stmt)
         inspection_model = result.scalar_one_or_none()

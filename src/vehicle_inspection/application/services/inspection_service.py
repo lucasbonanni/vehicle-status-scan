@@ -1,5 +1,6 @@
 """Inspection service implementing business logic for vehicle inspections."""
 
+import logging
 from datetime import datetime
 from typing import List, Optional, Dict, TYPE_CHECKING
 from uuid import UUID
@@ -9,6 +10,11 @@ from src.vehicle_inspection.domain.entities.vehicle import VehicleType, Car, Mot
 from src.vehicle_inspection.domain.value_objects.checkpoint_score import CheckpointScore
 from src.vehicle_inspection.domain.value_objects.checkpoint_types import CheckpointType
 from src.vehicle_inspection.domain.value_objects.safety_result import SafetyResult
+from src.vehicle_inspection.infrastructure.logging import (
+    get_logger,
+    log_business_rule_violation,
+    log_with_extra
+)
 
 if TYPE_CHECKING:
     from src.vehicle_inspection.application.ports.repositories import InspectionRepository, InspectorRepository
@@ -25,6 +31,7 @@ class InspectionService:
         """Initialize inspection service with repository dependencies."""
         self._inspection_repository = inspection_repository
         self._inspector_repository = inspector_repository
+        self._logger = get_logger(__name__)
 
     async def create_inspection(
         self,
@@ -46,19 +53,31 @@ class InspectionService:
             ValueError: If input validation fails
             RuntimeError: If inspector not found or inactive
         """
+        self._logger.info(f"Creating inspection for license plate {license_plate} by inspector {inspector_id}")
+
         # Validate inputs
         if not license_plate or not license_plate.strip():
+            self._logger.warning("Attempted to create inspection with empty license plate")
             raise ValueError("License plate cannot be empty")
 
         if not isinstance(vehicle_type, VehicleType):
+            self._logger.warning(f"Invalid vehicle type provided: {type(vehicle_type)}")
             raise ValueError("Vehicle type must be a VehicleType enum")
 
         # Validate inspector exists and is active
         inspector = await self._inspector_repository.find_by_id(inspector_id)
         if not inspector:
+            self._logger.error(f"Inspector {inspector_id} not found when creating inspection")
             raise RuntimeError(f"Inspector with ID {inspector_id} not found")
 
         if not inspector.can_perform_inspections():
+            log_business_rule_violation(
+                self._logger,
+                "inspector_not_authorized",
+                f"Inspector {inspector_id} attempted to create inspection but is not authorized",
+                inspector_id=str(inspector_id),
+                inspector_status=inspector.status.value if hasattr(inspector.status, 'value') else str(inspector.status)
+            )
             raise RuntimeError(f"Inspector {inspector_id} is not authorized to perform inspections")
 
         # Normalize license plate
@@ -74,6 +93,18 @@ class InspectionService:
 
         # Save to repository
         saved_inspection = await self._inspection_repository.save(inspection)
+
+        log_with_extra(
+            self._logger,
+            logging.INFO,
+            f"Inspection created successfully for {normalized_plate}",
+            inspection_id=str(saved_inspection.id),
+            license_plate=normalized_plate,
+            vehicle_type=vehicle_type.value,
+            inspector_id=str(inspector_id),
+            status=InspectionStatus.DRAFT.value
+        )
+
         return saved_inspection
 
     async def update_checkpoint_scores(
@@ -94,13 +125,23 @@ class InspectionService:
             ValueError: If inspection not found or completed
             RuntimeError: If business rules violated
         """
+        self._logger.info(f"Updating checkpoint scores for inspection {inspection_id}")
+
         # Find inspection
         inspection = await self._inspection_repository.find_by_id(inspection_id)
         if not inspection:
+            self._logger.error(f"Inspection {inspection_id} not found for score update")
             raise ValueError(f"Inspection with ID {inspection_id} not found")
 
         # Validate inspection can be modified
         if inspection.status == InspectionStatus.COMPLETED:
+            log_business_rule_violation(
+                self._logger,
+                "modify_completed_inspection",
+                f"Attempted to modify scores for completed inspection {inspection_id}",
+                inspection_id=str(inspection_id),
+                license_plate=inspection.license_plate
+            )
             raise ValueError("Cannot modify checkpoint scores for completed inspection")
 
         # Validate checkpoint scores
@@ -111,6 +152,17 @@ class InspectionService:
 
         # Save updated inspection
         updated_inspection = await self._inspection_repository.update(inspection)
+
+        log_with_extra(
+            self._logger,
+            logging.INFO,
+            f"Checkpoint scores updated for inspection {inspection_id}",
+            inspection_id=str(inspection_id),
+            license_plate=inspection.license_plate,
+            checkpoint_count=len(checkpoint_scores),
+            vehicle_type=inspection.vehicle_type.value
+        )
+
         return updated_inspection
 
     async def complete_inspection(
@@ -131,13 +183,23 @@ class InspectionService:
             ValueError: If inspection not found or cannot be completed
             RuntimeError: If business rules violated
         """
+        self._logger.info(f"Completing inspection {inspection_id}")
+
         # Find inspection
         inspection = await self._inspection_repository.find_by_id(inspection_id)
         if not inspection:
+            self._logger.error(f"Inspection {inspection_id} not found for completion")
             raise ValueError(f"Inspection with ID {inspection_id} not found")
 
         # Validate inspection can be completed
         if inspection.status == InspectionStatus.COMPLETED:
+            log_business_rule_violation(
+                self._logger,
+                "complete_already_completed_inspection",
+                f"Attempted to complete already completed inspection {inspection_id}",
+                inspection_id=str(inspection_id),
+                license_plate=inspection.license_plate
+            )
             raise ValueError("Inspection is already completed")
 
         # Validate all required checkpoints have scores
@@ -147,6 +209,14 @@ class InspectionService:
         missing_checkpoints = required_checkpoints - current_checkpoints
         if missing_checkpoints:
             missing_names = [cp.value for cp in missing_checkpoints]
+            log_business_rule_violation(
+                self._logger,
+                "incomplete_checkpoint_scores",
+                f"Attempted to complete inspection {inspection_id} with missing checkpoints: {missing_names}",
+                inspection_id=str(inspection_id),
+                license_plate=inspection.license_plate,
+                missing_checkpoints=missing_names
+            )
             raise ValueError(f"Missing required checkpoint scores: {', '.join(missing_names)}")
 
         # Update observations if provided
@@ -158,6 +228,22 @@ class InspectionService:
 
         # Save completed inspection
         completed_inspection = await self._inspection_repository.update(inspection)
+
+        # Log completion with safety result
+        safety_result = completed_inspection.calculate_safety_result()
+        log_with_extra(
+            self._logger,
+            logging.INFO,
+            f"Inspection {inspection_id} completed successfully",
+            inspection_id=str(inspection_id),
+            license_plate=inspection.license_plate,
+            vehicle_type=inspection.vehicle_type.value,
+            is_safe=safety_result.is_safe,
+            requires_reinspection=safety_result.requires_reinspection,
+            total_score=safety_result.total_score,
+            inspector_id=str(inspection.inspector_id)
+        )
+
         return completed_inspection
 
     async def get_inspection_by_id(self, inspection_id: UUID) -> Optional[Inspection]:
