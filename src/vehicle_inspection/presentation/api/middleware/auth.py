@@ -10,7 +10,7 @@ from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 import os
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 
 from ....domain.entities.inspector import Inspector
 from ....domain.value_objects.auth import LoginCredentials
@@ -77,7 +77,7 @@ async def get_current_inspector(
 
         # Check token expiration
         exp = payload.get("exp")
-        if exp and datetime.fromtimestamp(exp, UTC) < datetime.now(UTC):
+        if exp and datetime.fromtimestamp(exp, timezone.utc) < datetime.now(timezone.utc):
             raise AuthenticationError("Token has expired")
 
     except JWTError as e:
@@ -141,14 +141,14 @@ def create_access_token(inspector_id: str, expires_delta: Optional[timedelta] = 
         str: The encoded JWT token
     """
     if expires_delta:
-        expire = datetime.now(UTC) + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(hours=JWT_EXPIRATION_HOURS)
+        expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS)
 
     to_encode = {
         "sub": inspector_id,
         "exp": expire,
-        "iat": datetime.now(UTC),
+        "iat": datetime.now(timezone.utc),
         "type": "access_token"
     }
 
