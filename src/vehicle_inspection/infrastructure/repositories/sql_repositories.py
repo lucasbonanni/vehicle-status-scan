@@ -31,6 +31,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
 
     def __init__(self, session: AsyncSession):
         self._session = session
+        self._logger = get_logger(__name__)
 
     async def save(self, booking: Booking) -> Booking:
         """Save a booking to the database."""
@@ -95,8 +96,8 @@ class SQLAlchemyBookingRepository(BookingRepository):
 
         return [self._model_to_entity(model) for model in booking_models]
 
-    async def get_available_slots(self, target_date: date) -> List[TimeSlot]:
-        """Get available time slots for a specific date."""
+    async def find_available_slots(self, target_date: date) -> List[TimeSlot]:
+        """Find available time slots for a specific date."""
         log_database_operation(
             self._logger,
             "SELECT",
