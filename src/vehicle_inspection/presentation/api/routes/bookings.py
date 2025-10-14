@@ -12,10 +12,10 @@ router = APIRouter()
 
 
 class BookingRequest(BaseModel):
-    """Request to create a booking."""
+    """Request to create a booking for vehicle inspection."""
     license_plate: str
     appointment_date: datetime
-    user_id: Optional[UUID] = None  # Optional for demo, will use test user
+    # Note: user_id is handled internally, no user account required
 
 
 class BookingResponse(BaseModel):
@@ -48,12 +48,12 @@ class AvailableSlotsResponse(BaseModel):
 
 
 class BookingActionRequest(BaseModel):
-    """Request for booking actions."""
-    user_id: Optional[UUID] = None
+    """Request for booking actions (license plate-based, no user account required)."""
+    pass  # No fields needed - booking actions work on booking ID only
 
 
-# Test user ID for demo purposes
-TEST_USER_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+# Default user ID for license plate-based bookings (no user accounts required)
+DEFAULT_USER_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
 @router.get("/available-slots")
@@ -104,10 +104,10 @@ async def get_available_slots(
 
 @router.post("/")
 async def create_booking(request: BookingRequest) -> BookingResponse:
-    """Create a new booking appointment."""
+    """Create a new vehicle inspection appointment using license plate."""
     try:
-        # Use test user if no user_id provided
-        user_id = request.user_id or TEST_USER_ID
+        # Use default user ID for license plate-based booking (no user account required)
+        user_id = DEFAULT_USER_ID
 
         # Create booking using database service
         service_factory = get_service_factory()
@@ -170,7 +170,7 @@ async def confirm_booking(
 ) -> BookingResponse:
     """Confirm a booking."""
     try:
-        user_id = request.user_id or TEST_USER_ID
+        user_id = DEFAULT_USER_ID
 
         service_factory = get_service_factory()
         async with service_factory.get_booking_service() as booking_service:
@@ -202,7 +202,7 @@ async def cancel_booking(
 ) -> BookingResponse:
     """Cancel a booking."""
     try:
-        user_id = request.user_id or TEST_USER_ID
+        user_id = DEFAULT_USER_ID
 
         service_factory = get_service_factory()
         async with service_factory.get_booking_service() as booking_service:
@@ -227,40 +227,13 @@ async def cancel_booking(
         raise HTTPException(status_code=500, detail=f"Error cancelling booking: {str(e)}") from e
 
 
-@router.get("/user/{user_id}")
-async def get_user_bookings(
-    user_id: UUID = Path(..., description="User ID")
-) -> List[BookingResponse]:
-    """Get all bookings for a user."""
-    try:
-        service_factory = get_service_factory()
-        async with service_factory.get_booking_service() as booking_service:
-            bookings = await booking_service.get_user_bookings(user_id)
-
-        return [
-            BookingResponse(
-                id=booking.id,
-                license_plate=booking.license_plate,
-                appointment_date=booking.appointment_date,
-                user_id=booking.user_id,
-                status=booking.status.value,
-                created_at=booking.created_at,
-                updated_at=booking.updated_at
-            )
-            for booking in bookings
-        ]
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting user bookings: {str(e)}") from e
-
-
 @router.get("/demo/bookings")
 async def get_demo_bookings() -> List[BookingResponse]:
-    """Get demo bookings for testing (using test user)."""
+    """Get demo bookings for testing."""
     try:
         service_factory = get_service_factory()
         async with service_factory.get_booking_service() as booking_service:
-            bookings = await booking_service.get_user_bookings(TEST_USER_ID)
+            bookings = await booking_service.get_user_bookings(DEFAULT_USER_ID)
 
         return [
             BookingResponse(
@@ -281,9 +254,9 @@ async def get_demo_bookings() -> List[BookingResponse]:
 
 @router.get("/vehicle/{license_plate}")
 async def get_vehicle_bookings(
-    license_plate: str = Path(..., description="Vehicle license plate")
+    license_plate: str = Path(..., description="Vehicle license plate (e.g., ABC123)")
 ) -> List[BookingResponse]:
-    """Get all bookings for a vehicle."""
+    """Get all inspection bookings for a specific vehicle by license plate."""
     try:
         service_factory = get_service_factory()
         async with service_factory.get_booking_service() as booking_service:
