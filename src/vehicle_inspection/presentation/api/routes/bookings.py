@@ -109,12 +109,19 @@ async def create_booking(request: BookingRequest) -> BookingResponse:
         # Use default user ID for license plate-based booking (no user account required)
         user_id = DEFAULT_USER_ID
 
+        # Normalize datetime to UTC and remove timezone info for database compatibility
+        appointment_date = request.appointment_date
+        if appointment_date.tzinfo is not None:
+            # Convert to UTC and make timezone-naive for database storage
+            appointment_date = appointment_date.utctimetuple()
+            appointment_date = datetime(*appointment_date[:6])
+
         # Create booking using database service
         service_factory = get_service_factory()
         async with service_factory.get_booking_service() as booking_service:
             booking = await booking_service.request_appointment(
                 license_plate=request.license_plate,
-                appointment_date=request.appointment_date,
+                appointment_date=appointment_date,
                 user_id=user_id
             )
 
