@@ -227,31 +227,6 @@ async def cancel_booking(
         raise HTTPException(status_code=500, detail=f"Error cancelling booking: {str(e)}") from e
 
 
-@router.get("/demo/bookings")
-async def get_demo_bookings() -> List[BookingResponse]:
-    """Get demo bookings for testing."""
-    try:
-        service_factory = get_service_factory()
-        async with service_factory.get_booking_service() as booking_service:
-            bookings = await booking_service.get_user_bookings(DEFAULT_USER_ID)
-
-        return [
-            BookingResponse(
-                id=booking.id,
-                license_plate=booking.license_plate,
-                appointment_date=booking.appointment_date,
-                user_id=booking.user_id,
-                status=booking.status.value,
-                created_at=booking.created_at,
-                updated_at=booking.updated_at
-            )
-            for booking in bookings
-        ]
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting demo bookings: {str(e)}") from e
-
-
 @router.get("/vehicle/{license_plate}")
 async def get_vehicle_bookings(
     license_plate: str = Path(..., description="Vehicle license plate (e.g., ABC123)")
