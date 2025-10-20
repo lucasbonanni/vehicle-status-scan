@@ -8,7 +8,6 @@ from uuid import UUID
 
 from ....domain.entities.vehicle import VehicleType
 from ....domain.value_objects.checkpoint_types import CheckpointType
-from ....infrastructure.services import ServiceFactory
 
 router = APIRouter()
 
@@ -16,6 +15,7 @@ router = APIRouter()
 # Response Models
 class CheckpointScoreReport(BaseModel):
     """Public checkpoint score information."""
+
     checkpoint_type: CheckpointType
     score: int
     observations: Optional[str]
@@ -28,34 +28,53 @@ class CheckpointScoreReport(BaseModel):
             checkpoint_type=checkpoint_score.checkpoint_type,
             score=checkpoint_score.score,
             observations=checkpoint_score.observations,
-            description=checkpoint_score.checkpoint_type.get_description()
+            description=checkpoint_score.checkpoint_type.get_description(),
         )
 
 
 class SafetyResultReport(BaseModel):
     """Public safety result information."""
+
     total_score: int = Field(..., description="Total score across all checkpoints")
     is_safe: bool = Field(..., description="Whether the vehicle is safe to operate")
-    requires_reinspection: bool = Field(..., description="Whether the vehicle requires reinspection")
-    safety_category: str = Field(..., description="Safety category: SAFE, CONDITIONAL, or UNSAFE")
-    critical_failures: List[CheckpointType] = Field(default_factory=list, description="Checkpoints with critical failures (score < 5)")
+    requires_reinspection: bool = Field(
+        ..., description="Whether the vehicle requires reinspection"
+    )
+    safety_category: str = Field(
+        ..., description="Safety category: SAFE, CONDITIONAL, or UNSAFE"
+    )
+    critical_failures: List[CheckpointType] = Field(
+        default_factory=list,
+        description="Checkpoints with critical failures (score < 5)",
+    )
 
 
 class InspectionReport(BaseModel):
     """Public inspection report response."""
+
     license_plate: str = Field(..., description="Vehicle license plate")
     vehicle_type: VehicleType = Field(..., description="Type of vehicle inspected")
-    inspection_date: datetime = Field(..., description="Date when inspection was completed")
-    inspector_id: UUID = Field(..., description="ID of the inspector who performed the inspection")
+    inspection_date: datetime = Field(
+        ..., description="Date when inspection was completed"
+    )
+    inspector_id: UUID = Field(
+        ..., description="ID of the inspector who performed the inspection"
+    )
 
     # Checkpoint scores
-    checkpoint_scores: List[CheckpointScoreReport] = Field(..., description="Individual checkpoint scores and observations")
+    checkpoint_scores: List[CheckpointScoreReport] = Field(
+        ..., description="Individual checkpoint scores and observations"
+    )
 
     # Safety assessment
-    safety_result: SafetyResultReport = Field(..., description="Overall safety assessment")
+    safety_result: SafetyResultReport = Field(
+        ..., description="Overall safety assessment"
+    )
 
     # Additional information
-    observations: Optional[str] = Field(None, description="General inspection observations")
+    observations: Optional[str] = Field(
+        None, description="General inspection observations"
+    )
     created_at: datetime = Field(..., description="When the inspection was created")
     completed_at: datetime = Field(..., description="When the inspection was completed")
 
@@ -65,18 +84,24 @@ class InspectionReport(BaseModel):
 
 class InspectionNotFoundResponse(BaseModel):
     """Response when no inspection is found."""
+
     message: str = Field(..., description="Error message")
     license_plate: str = Field(..., description="The searched license plate")
     suggestion: str = Field(..., description="Suggestion for the user")
 
 
 # Public Endpoints
-@router.get("/{license_plate}",
-           response_model=InspectionReport,
-           responses={
-               200: {"description": "Inspection report found"},
-               404: {"description": "No inspection found for this license plate", "model": InspectionNotFoundResponse}
-           })
+@router.get(
+    "/{license_plate}",
+    response_model=InspectionReport,
+    responses={
+        200: {"description": "Inspection report found"},
+        404: {
+            "description": "No inspection found for this license plate",
+            "model": InspectionNotFoundResponse,
+        },
+    },
+)
 async def get_inspection_report(license_plate: str) -> InspectionReport:
     """
     Get the latest inspection report for a vehicle by license plate.
@@ -99,12 +124,19 @@ async def get_inspection_report(license_plate: str) -> InspectionReport:
         if not license_plate:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="License plate cannot be empty"
+                detail="License plate cannot be empty",
             )
 
-        async with ServiceFactory().get_inspection_service() as inspection_service:
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
             # Get the latest completed inspection
-            inspection = await inspection_service.get_latest_inspection_by_license_plate(license_plate)
+            inspection = (
+                await inspection_service.get_latest_inspection_by_license_plate(
+                    license_plate
+                )
+            )
 
             if not inspection:
                 raise HTTPException(
@@ -112,8 +144,8 @@ async def get_inspection_report(license_plate: str) -> InspectionReport:
                     detail={
                         "message": f"No inspection report found for license plate '{license_plate}'",
                         "license_plate": license_plate,
-                        "suggestion": "Please ensure the license plate is correct and that an inspection has been completed for this vehicle."
-                    }
+                        "suggestion": "Please ensure the license plate is correct and that an inspection has been completed for this vehicle.",
+                    },
                 )
 
             # Only return completed inspections for public access
@@ -123,8 +155,8 @@ async def get_inspection_report(license_plate: str) -> InspectionReport:
                     detail={
                         "message": f"No completed inspection found for license plate '{license_plate}'",
                         "license_plate": license_plate,
-                        "suggestion": "The inspection for this vehicle may still be in progress. Please check again later."
-                    }
+                        "suggestion": "The inspection for this vehicle may still be in progress. Please check again later.",
+                    },
                 )
 
             # Convert checkpoint scores to public format
@@ -142,17 +174,20 @@ async def get_inspection_report(license_plate: str) -> InspectionReport:
 
             # Find critical failures (scores < 5)
             critical_failures = [
-                score.checkpoint_type for score in inspection.checkpoint_scores
+                score.checkpoint_type
+                for score in inspection.checkpoint_scores
                 if score.score < 5
             ]
 
             # Create safety result report
             safety_result = SafetyResultReport(
-                total_score=inspection.total_score,
+                total_score=inspection.get_total_score()
+                if hasattr(inspection, "get_total_score")
+                else None,
                 is_safe=inspection.is_safe,
                 requires_reinspection=inspection.requires_reinspection,
                 safety_category=safety_category,
-                critical_failures=critical_failures
+                critical_failures=critical_failures,
             )
 
             # Create the public report
@@ -165,35 +200,36 @@ async def get_inspection_report(license_plate: str) -> InspectionReport:
                 safety_result=safety_result,
                 observations=inspection.observations,
                 created_at=inspection.created_at,
-                completed_at=inspection.completed_at
+                completed_at=inspection.completed_at,
             )
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception:
         # Log the error in a real application
         # logger.error(f"Error retrieving inspection report for {license_plate}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving the inspection report"
+            detail="An error occurred while retrieving the inspection report",
         )
 
 
-@router.get("/{license_plate}/history",
-           response_model=List[InspectionReport],
-           responses={
-               200: {"description": "Inspection history found"},
-               404: {"description": "No inspections found for this license plate"}
-           })
+@router.get(
+    "/{license_plate}/history",
+    response_model=List[InspectionReport],
+    responses={
+        200: {"description": "Inspection history found"},
+        404: {"description": "No inspections found for this license plate"},
+    },
+)
 async def get_inspection_history(
     license_plate: str,
-    limit: int = Query(default=10, ge=1, le=50, description="Maximum number of inspections to return")
+    limit: int = Query(
+        default=10, ge=1, le=50, description="Maximum number of inspections to return"
+    ),
 ) -> List[InspectionReport]:
     """
     Get inspection history for a vehicle by license plate.
@@ -217,19 +253,22 @@ async def get_inspection_history(
         if not license_plate:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="License plate cannot be empty"
+                detail="License plate cannot be empty",
             )
 
-        async with ServiceFactory().get_inspection_service() as inspection_service:
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
             # Get inspection history
             inspections = await inspection_service.get_inspections_by_license_plate(
-                license_plate=license_plate,
-                limit=limit
+                license_plate=license_plate, limit=limit
             )
 
             # Filter only completed inspections for public access
             completed_inspections = [
-                inspection for inspection in inspections
+                inspection
+                for inspection in inspections
                 if inspection.status.value == "COMPLETED"
             ]
 
@@ -239,8 +278,8 @@ async def get_inspection_history(
                     detail={
                         "message": f"No completed inspection history found for license plate '{license_plate}'",
                         "license_plate": license_plate,
-                        "suggestion": "This vehicle may not have any completed inspections on record."
-                    }
+                        "suggestion": "This vehicle may not have any completed inspections on record.",
+                    },
                 )
 
             # Convert to public report format
@@ -261,17 +300,20 @@ async def get_inspection_history(
 
                 # Find critical failures
                 critical_failures = [
-                    score.checkpoint_type for score in inspection.checkpoint_scores
+                    score.checkpoint_type
+                    for score in inspection.checkpoint_scores
                     if score.score < 5
                 ]
 
                 # Create safety result
                 safety_result = SafetyResultReport(
-                    total_score=inspection.total_score,
+                    total_score=inspection.get_total_score()
+                    if hasattr(inspection, "get_total_score")
+                    else None,
                     is_safe=inspection.is_safe,
                     requires_reinspection=inspection.requires_reinspection,
                     safety_category=safety_category,
-                    critical_failures=critical_failures
+                    critical_failures=critical_failures,
                 )
 
                 # Create report
@@ -284,7 +326,7 @@ async def get_inspection_history(
                     safety_result=safety_result,
                     observations=inspection.observations,
                     created_at=inspection.created_at,
-                    completed_at=inspection.completed_at
+                    completed_at=inspection.completed_at,
                 )
                 reports.append(report)
 
@@ -294,14 +336,11 @@ async def get_inspection_history(
         # Re-raise HTTP exceptions as-is
         raise
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception:
         # Log the error in a real application
         # logger.error(f"Error retrieving inspection history for {license_plate}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving the inspection history"
+            detail="An error occurred while retrieving the inspection history",
         )

@@ -10,7 +10,6 @@ from ....domain.entities.inspector import Inspector
 from ....domain.entities.vehicle import VehicleType
 from ....domain.value_objects.checkpoint_types import CheckpointType
 from ....domain.value_objects.checkpoint_score import CheckpointScore
-from ....infrastructure.services import ServiceFactory
 from ..middleware import get_current_inspector
 
 router = APIRouter()
@@ -19,29 +18,44 @@ router = APIRouter()
 # Request/Response Models
 class CheckpointScoreRequest(BaseModel):
     """Request model for checkpoint scores."""
+
     checkpoint_type: CheckpointType
     score: int = Field(..., ge=1, le=10, description="Score from 1 to 10")
-    observations: Optional[str] = Field(None, max_length=500, description="Optional observations for this checkpoint")
+    observations: Optional[str] = Field(
+        None, max_length=500, description="Optional observations for this checkpoint"
+    )
 
 
 class CreateInspectionRequest(BaseModel):
     """Request model for creating an inspection."""
-    license_plate: str = Field(..., min_length=1, max_length=20, description="Vehicle license plate")
-    vehicle_type: VehicleType = Field(..., description="Type of vehicle (car or motorcycle)")
+
+    license_plate: str = Field(
+        ..., min_length=1, max_length=20, description="Vehicle license plate"
+    )
+    vehicle_type: VehicleType = Field(
+        ..., description="Type of vehicle (car or motorcycle)"
+    )
 
 
 class UpdateScoresRequest(BaseModel):
     """Request model for updating checkpoint scores."""
-    scores: List[CheckpointScoreRequest] = Field(..., min_items=1, description="List of checkpoint scores to update")
+
+    scores: List[CheckpointScoreRequest] = Field(
+        ..., min_items=1, description="List of checkpoint scores to update"
+    )
 
 
 class CompleteInspectionRequest(BaseModel):
     """Request model for completing an inspection."""
-    observations: Optional[str] = Field(None, max_length=1000, description="Final inspection observations")
+
+    observations: Optional[str] = Field(
+        None, max_length=1000, description="Final inspection observations"
+    )
 
 
 class CheckpointScoreResponse(BaseModel):
     """Response model for checkpoint scores."""
+
     checkpoint_type: CheckpointType
     score: int
     observations: Optional[str]
@@ -49,6 +63,7 @@ class CheckpointScoreResponse(BaseModel):
 
 class InspectionResponse(BaseModel):
     """Response model for inspection details."""
+
     id: UUID
     license_plate: str
     vehicle_type: VehicleType
@@ -69,15 +84,18 @@ class InspectionResponse(BaseModel):
 
 class InspectionListResponse(BaseModel):
     """Response model for inspection list."""
+
     inspections: List[InspectionResponse]
     total: int
 
 
 # Endpoints
-@router.post("/", response_model=InspectionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", response_model=InspectionResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_inspection(
     request: CreateInspectionRequest,
-    current_inspector: Inspector = Depends(get_current_inspector)
+    current_inspector: Inspector = Depends(get_current_inspector),
 ) -> InspectionResponse:
     """
     Create a new inspection.
@@ -86,52 +104,77 @@ async def create_inspection(
     Requires inspector authentication.
     """
     try:
-        async with ServiceFactory().get_inspection_service() as inspection_service:
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
+            # Convert the inspector ID to a UUID if it's a string
+            inspector_id = current_inspector.id
+            if isinstance(inspector_id, str):
+                inspector_id = UUID(inspector_id)
+
             inspection = await inspection_service.create_inspection(
                 license_plate=request.license_plate,
                 vehicle_type=request.vehicle_type,
-                inspector_id=str(current_inspector.id)
+                inspector_id=inspector_id,
             )
 
             # Convert to response model
+            scores = []
+            if (
+                hasattr(inspection, "checkpoint_scores")
+                and inspection.checkpoint_scores
+            ):
+                scores = [
+                    CheckpointScoreResponse(
+                        checkpoint_type=score.checkpoint_type,
+                        score=score.score,
+                        observations=score.notes
+                        if hasattr(score, "notes")
+                        else score.observations,
+                    )
+                    for score in inspection.checkpoint_scores
+                ]
+
             return InspectionResponse(
                 id=inspection.id,
                 license_plate=inspection.license_plate,
                 vehicle_type=inspection.vehicle_type,
                 inspector_id=inspection.inspector_id,
-                status=inspection.status.value,
-                scores=[
-                    CheckpointScoreResponse(
-                        checkpoint_type=score.checkpoint_type,
-                        score=score.score,
-                        observations=score.observations
-                    ) for score in inspection.checkpoint_scores
-                ],
-                observations=inspection.observations,
-                total_score=inspection.total_score,
-                is_safe=inspection.is_safe,
-                requires_reinspection=inspection.requires_reinspection,
+                status=inspection.status.value
+                if hasattr(inspection, "status")
+                else "draft",
+                scores=scores,
+                observations=inspection.observations
+                if hasattr(inspection, "observations")
+                else None,
+                total_score=inspection.get_total_score()
+                if hasattr(inspection, "get_total_score")
+                else None,
+                is_safe=inspection.is_safe if hasattr(inspection, "is_safe") else None,
+                requires_reinspection=inspection.requires_reinspection
+                if hasattr(inspection, "requires_reinspection")
+                else None,
                 created_at=inspection.created_at,
-                updated_at=inspection.updated_at,
+                updated_at=inspection.updated_at
+                if hasattr(inspection, "updated_at")
+                else inspection.created_at,
                 completed_at=inspection.completed_at
+                if hasattr(inspection, "completed_at")
+                else None,
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
 
 @router.get("/{inspection_id}", response_model=InspectionResponse)
 async def get_inspection(
-    inspection_id: UUID,
-    current_inspector: Inspector = Depends(get_current_inspector)
+    inspection_id: UUID, current_inspector: Inspector = Depends(get_current_inspector)
 ) -> InspectionResponse:
     """
     Get inspection details by ID.
@@ -140,49 +183,74 @@ async def get_inspection(
     Requires inspector authentication.
     """
     try:
-        async with ServiceFactory().get_inspection_service() as inspection_service:
-            inspection = await inspection_service.get_inspection_by_id(str(inspection_id))
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
+            inspection = await inspection_service.get_inspection_by_id(
+                str(inspection_id)
+            )
 
             if not inspection:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Inspection with ID {inspection_id} not found"
+                    detail=f"Inspection with ID {inspection_id} not found",
                 )
+
+            # Convert to response model
+            scores = []
+            if (
+                hasattr(inspection, "checkpoint_scores")
+                and inspection.checkpoint_scores
+            ):
+                scores = [
+                    CheckpointScoreResponse(
+                        checkpoint_type=score.checkpoint_type,
+                        score=score.score,
+                        observations=score.notes
+                        if hasattr(score, "notes")
+                        else score.observations,
+                    )
+                    for score in inspection.checkpoint_scores
+                ]
 
             return InspectionResponse(
                 id=inspection.id,
                 license_plate=inspection.license_plate,
                 vehicle_type=inspection.vehicle_type,
                 inspector_id=inspection.inspector_id,
-                status=inspection.status.value,
-                scores=[
-                    CheckpointScoreResponse(
-                        checkpoint_type=score.checkpoint_type,
-                        score=score.score,
-                        observations=score.observations
-                    ) for score in inspection.checkpoint_scores
-                ],
-                observations=inspection.observations,
-                total_score=inspection.total_score,
-                is_safe=inspection.is_safe,
-                requires_reinspection=inspection.requires_reinspection,
+                status=inspection.status.value
+                if hasattr(inspection, "status")
+                else "draft",
+                scores=scores,
+                observations=inspection.observations
+                if hasattr(inspection, "observations")
+                else None,
+                total_score=inspection.get_total_score()
+                if hasattr(inspection, "get_total_score")
+                else None,
+                is_safe=inspection.is_safe if hasattr(inspection, "is_safe") else None,
+                requires_reinspection=inspection.requires_reinspection
+                if hasattr(inspection, "requires_reinspection")
+                else None,
                 created_at=inspection.created_at,
-                updated_at=inspection.updated_at,
+                updated_at=inspection.updated_at
+                if hasattr(inspection, "updated_at")
+                else inspection.created_at,
                 completed_at=inspection.completed_at
+                if hasattr(inspection, "completed_at")
+                else None,
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.put("/{inspection_id}/scores", response_model=InspectionResponse)
 async def update_checkpoint_scores(
     inspection_id: UUID,
     request: UpdateScoresRequest,
-    current_inspector: Inspector = Depends(get_current_inspector)
+    current_inspector: Inspector = Depends(get_current_inspector),
 ) -> InspectionResponse:
     """
     Update checkpoint scores for an inspection.
@@ -196,15 +264,17 @@ async def update_checkpoint_scores(
             CheckpointScore(
                 score=score_req.score,
                 checkpoint_type=score_req.checkpoint_type,
-                observations=score_req.observations
+                notes=score_req.observations or "",
             )
             for score_req in request.scores
         ]
 
-        async with ServiceFactory().get_inspection_service() as inspection_service:
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
             inspection = await inspection_service.update_checkpoint_scores(
-                inspection_id=str(inspection_id),
-                checkpoint_scores=checkpoint_scores
+                inspection_id=str(inspection_id), checkpoint_scores=checkpoint_scores
             )
 
             return InspectionResponse(
@@ -217,27 +287,28 @@ async def update_checkpoint_scores(
                     CheckpointScoreResponse(
                         checkpoint_type=score.checkpoint_type,
                         score=score.score,
-                        observations=score.observations
-                    ) for score in inspection.checkpoint_scores
+                        observations=score.notes
+                        if hasattr(score, "notes")
+                        else score.observations,
+                    )
+                    for score in inspection.checkpoint_scores
                 ],
                 observations=inspection.observations,
-                total_score=inspection.total_score,
+                total_score=inspection.get_total_score()
+                if hasattr(inspection, "get_total_score")
+                else None,
                 is_safe=inspection.is_safe,
                 requires_reinspection=inspection.requires_reinspection,
                 created_at=inspection.created_at,
                 updated_at=inspection.updated_at,
-                completed_at=inspection.completed_at
+                completed_at=inspection.completed_at,
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
 
@@ -245,7 +316,7 @@ async def update_checkpoint_scores(
 async def complete_inspection(
     inspection_id: UUID,
     request: CompleteInspectionRequest,
-    current_inspector: Inspector = Depends(get_current_inspector)
+    current_inspector: Inspector = Depends(get_current_inspector),
 ) -> InspectionResponse:
     """
     Complete an inspection.
@@ -255,10 +326,12 @@ async def complete_inspection(
     Requires inspector authentication.
     """
     try:
-        async with ServiceFactory().get_inspection_service() as inspection_service:
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
             inspection = await inspection_service.complete_inspection(
-                inspection_id=str(inspection_id),
-                observations=request.observations
+                inspection_id=str(inspection_id), observations=request.observations
             )
 
             return InspectionResponse(
@@ -271,34 +344,34 @@ async def complete_inspection(
                     CheckpointScoreResponse(
                         checkpoint_type=score.checkpoint_type,
                         score=score.score,
-                        observations=score.observations
-                    ) for score in inspection.checkpoint_scores
+                        observations=score.notes
+                        if hasattr(score, "notes")
+                        else score.observations,
+                    )
+                    for score in inspection.checkpoint_scores
                 ],
                 observations=inspection.observations,
-                total_score=inspection.total_score,
+                total_score=inspection.get_total_score()
+                if hasattr(inspection, "get_total_score")
+                else None,
                 is_safe=inspection.is_safe,
                 requires_reinspection=inspection.requires_reinspection,
                 created_at=inspection.created_at,
                 updated_at=inspection.updated_at,
-                completed_at=inspection.completed_at
+                completed_at=inspection.completed_at,
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
 
 @router.get("/", response_model=InspectionListResponse)
 async def list_inspections(
-    current_inspector: Inspector = Depends(get_current_inspector),
-    limit: int = 50
+    current_inspector: Inspector = Depends(get_current_inspector), limit: int = 50
 ) -> InspectionListResponse:
     """
     List inspections for the current inspector.
@@ -307,10 +380,12 @@ async def list_inspections(
     Requires inspector authentication.
     """
     try:
-        async with ServiceFactory().get_inspection_service() as inspection_service:
+        from ....infrastructure.services import get_service_factory
+
+        service_factory = get_service_factory()
+        async with service_factory.get_inspection_service() as inspection_service:
             inspections = await inspection_service.list_inspections_by_inspector(
-                inspector_id=str(current_inspector.id),
-                limit=limit
+                inspector_id=str(current_inspector.id), limit=limit
             )
 
             inspection_responses = [
@@ -324,26 +399,28 @@ async def list_inspections(
                         CheckpointScoreResponse(
                             checkpoint_type=score.checkpoint_type,
                             score=score.score,
-                            observations=score.observations
-                        ) for score in inspection.checkpoint_scores
+                            observations=score.notes
+                            if hasattr(score, "notes")
+                            else score.observations,
+                        )
+                        for score in inspection.checkpoint_scores
                     ],
                     observations=inspection.observations,
-                    total_score=inspection.total_score,
+                    total_score=inspection.get_total_score()
+                    if hasattr(inspection, "get_total_score")
+                    else None,
                     is_safe=inspection.is_safe,
                     requires_reinspection=inspection.requires_reinspection,
                     created_at=inspection.created_at,
                     updated_at=inspection.updated_at,
-                    completed_at=inspection.completed_at
-                ) for inspection in inspections
+                    completed_at=inspection.completed_at,
+                )
+                for inspection in inspections
             ]
 
             return InspectionListResponse(
-                inspections=inspection_responses,
-                total=len(inspection_responses)
+                inspections=inspection_responses, total=len(inspection_responses)
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

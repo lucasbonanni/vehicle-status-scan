@@ -11,10 +11,10 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 import os
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from ....domain.entities.inspector import Inspector
 from ....domain.value_objects.auth import LoginCredentials
-from ....infrastructure.services import ServiceFactory
 
 
 # Security scheme for bearer token authentication
@@ -28,16 +28,18 @@ JWT_EXPIRATION_HOURS = 8
 
 class AuthenticationError(Exception):
     """Raised when authentication fails."""
+
     pass
 
 
 class AuthorizationError(Exception):
     """Raised when authorization fails."""
+
     pass
 
 
 async def get_current_inspector(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> Inspector:
     """
     FastAPI dependency to get the current authenticated inspector.
@@ -65,9 +67,7 @@ async def get_current_inspector(
     try:
         # Decode JWT token
         payload = jwt.decode(
-            credentials.credentials,
-            JWT_SECRET_KEY,
-            algorithms=[JWT_ALGORITHM]
+            credentials.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
         )
 
         # Extract inspector ID from token
@@ -77,7 +77,9 @@ async def get_current_inspector(
 
         # Check token expiration
         exp = payload.get("exp")
-        if exp and datetime.fromtimestamp(exp, timezone.utc) < datetime.now(timezone.utc):
+        if exp and datetime.fromtimestamp(exp, timezone.utc) < datetime.now(
+            timezone.utc
+        ):
             raise AuthenticationError("Token has expired")
 
     except JWTError as e:
@@ -94,8 +96,16 @@ async def get_current_inspector(
         )
 
     # Get inspector from database
-    async with ServiceFactory().get_inspector_service() as inspector_service:
-        inspector = await inspector_service.get_inspector_by_id(inspector_id)
+    from ....infrastructure.services import get_service_factory
+
+    service_factory = get_service_factory()
+
+    # Use find_by_id from inspector repository
+    inspector_id_uuid = UUID(inspector_id)
+    async with service_factory.get_auth_service() as auth_service:
+        inspector = await auth_service._inspector_repository.find_by_id(
+            inspector_id_uuid
+        )
 
         if not inspector:
             raise HTTPException(
@@ -129,7 +139,9 @@ def auth_required(inspector: Inspector = Depends(get_current_inspector)) -> Insp
     return inspector
 
 
-def create_access_token(inspector_id: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    inspector_id: str, expires_delta: Optional[timedelta] = None
+) -> str:
     """
     Create a JWT access token for an inspector.
 
@@ -149,7 +161,7 @@ def create_access_token(inspector_id: str, expires_delta: Optional[timedelta] = 
         "sub": inspector_id,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
-        "type": "access_token"
+        "type": "access_token",
     }
 
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
@@ -166,7 +178,10 @@ async def authenticate_inspector(credentials: LoginCredentials) -> Optional[str]
     Returns:
         Optional[str]: Access token if authentication successful, None otherwise
     """
-    async with ServiceFactory().get_inspector_service() as inspector_service:
+    from ....infrastructure.services import get_service_factory
+
+    service_factory = get_service_factory()
+    async with service_factory.get_inspector_service() as inspector_service:
         inspector = await inspector_service.authenticate_inspector(credentials)
 
         if inspector:
@@ -185,7 +200,7 @@ class TokenResponse:
 
 # Optional: Admin-only access decorator
 async def get_admin_inspector(
-    current_inspector: Inspector = Depends(get_current_inspector)
+    current_inspector: Inspector = Depends(get_current_inspector),
 ) -> Inspector:
     """
     Dependency for endpoints that require admin privileges.
@@ -201,8 +216,7 @@ async def get_admin_inspector(
     """
     if not current_inspector.is_admin:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required"
         )
 
     return current_inspector

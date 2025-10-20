@@ -22,6 +22,11 @@ class CheckpointScore:
             raise ValueError("checkpoint_type must be a CheckpointType enum")
 
     @property
+    def observations(self) -> str:
+        """Alias for notes to match API naming."""
+        return self.notes
+
+    @property
     def is_critical_failure(self) -> bool:
         """Check if this score represents a critical failure."""
         return self.score < 5

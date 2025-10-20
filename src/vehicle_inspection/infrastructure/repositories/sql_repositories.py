@@ -1,29 +1,45 @@
 """SQLAlchemy repository implementations."""
 
 import json
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time
 from typing import List, Optional, Dict
 from uuid import UUID
 
 from sqlalchemy import select, and_, func, delete, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
 
 from src.vehicle_inspection.infrastructure.logging import (
     get_logger,
-    log_database_operation
+    log_database_operation,
 )
 
-from src.vehicle_inspection.application.ports.repositories import BookingRepository, VehicleRepository, UserRepository, InspectorRepository, AuthTokenRepository, InspectionRepository
+from src.vehicle_inspection.application.ports.repositories import (
+    BookingRepository,
+    VehicleRepository,
+    UserRepository,
+    InspectorRepository,
+    AuthTokenRepository,
+    InspectionRepository,
+)
 from src.vehicle_inspection.domain.entities.booking import Booking, BookingStatus
 from src.vehicle_inspection.domain.entities.vehicle import Vehicle, Car, Motorcycle
-from src.vehicle_inspection.domain.entities.inspector import Inspector, InspectorRole, InspectorStatus
-from src.vehicle_inspection.domain.entities.inspection import Inspection, InspectionStatus
+from src.vehicle_inspection.domain.entities.inspector import Inspector, InspectorStatus
+from src.vehicle_inspection.domain.entities.inspection import (
+    Inspection,
+    InspectionStatus,
+)
 from src.vehicle_inspection.domain.value_objects.time_slot import TimeSlot
 from src.vehicle_inspection.domain.value_objects.auth import AuthToken
 from src.vehicle_inspection.domain.value_objects.checkpoint_score import CheckpointScore
 from src.vehicle_inspection.domain.value_objects.checkpoint_types import CheckpointType
-from src.vehicle_inspection.infrastructure.database.models import BookingModel, TimeSlotModel, VehicleModel, UserModel, InspectorModel, InspectionModel
+from ..database.models import (
+    BookingModel,
+    TimeSlotModel,
+    VehicleModel,
+    UserModel,
+    InspectorModel,
+    InspectionModel,
+)
 
 
 class SQLAlchemyBookingRepository(BookingRepository):
@@ -56,7 +72,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
                 status=booking.status,
                 user_id=booking.user_id,
                 created_at=booking.created_at,
-                updated_at=datetime.utcnow()
+                updated_at=datetime.utcnow(),
             )
             self._session.add(booking_model)
 
@@ -76,9 +92,11 @@ class SQLAlchemyBookingRepository(BookingRepository):
 
     async def find_by_license_plate(self, license_plate: str) -> List[Booking]:
         """Find all bookings for a license plate."""
-        stmt = select(BookingModel).where(
-            BookingModel.license_plate == license_plate.upper()
-        ).order_by(BookingModel.appointment_date.desc())
+        stmt = (
+            select(BookingModel)
+            .where(BookingModel.license_plate == license_plate.upper())
+            .order_by(BookingModel.appointment_date.desc())
+        )
 
         result = await self._session.execute(stmt)
         booking_models = result.scalars().all()
@@ -87,9 +105,11 @@ class SQLAlchemyBookingRepository(BookingRepository):
 
     async def find_by_user_id(self, user_id: UUID) -> List[Booking]:
         """Find all bookings for a user."""
-        stmt = select(BookingModel).where(
-            BookingModel.user_id == user_id
-        ).order_by(BookingModel.appointment_date.desc())
+        stmt = (
+            select(BookingModel)
+            .where(BookingModel.user_id == user_id)
+            .order_by(BookingModel.appointment_date.desc())
+        )
 
         result = await self._session.execute(stmt)
         booking_models = result.scalars().all()
@@ -102,20 +122,24 @@ class SQLAlchemyBookingRepository(BookingRepository):
             self._logger,
             "SELECT",
             "TimeSlotModel",
-            extra={"target_date": str(target_date)}
+            extra={"target_date": str(target_date)},
         )
 
         # First, try to get existing time slots from database
         start_of_day = datetime.combine(target_date, time.min)
         end_of_day = datetime.combine(target_date, time.max)
 
-        stmt = select(TimeSlotModel).where(
-            and_(
-                TimeSlotModel.date >= start_of_day,
-                TimeSlotModel.date <= end_of_day,
-                TimeSlotModel.is_available == True
+        stmt = (
+            select(TimeSlotModel)
+            .where(
+                and_(
+                    TimeSlotModel.date >= start_of_day,
+                    TimeSlotModel.date <= end_of_day,
+                    TimeSlotModel.is_available is True,
+                )
             )
-        ).order_by(TimeSlotModel.start_time)
+            .order_by(TimeSlotModel.start_time)
+        )
 
         result = await self._session.execute(stmt)
         slot_models = result.scalars().all()
@@ -124,14 +148,14 @@ class SQLAlchemyBookingRepository(BookingRepository):
             # Return existing slots from database
             self._logger.debug(
                 "Found existing time slots in database",
-                extra={"slot_count": len(slot_models), "date": str(target_date)}
+                extra={"slot_count": len(slot_models), "date": str(target_date)},
             )
             return [self._slot_model_to_value_object(model) for model in slot_models]
         else:
             # Generate default slots if none exist
             self._logger.info(
                 "No existing slots found, generating default slots",
-                extra={"date": str(target_date)}
+                extra={"date": str(target_date)},
             )
             return self._generate_default_slots(target_date)
 
@@ -141,14 +165,19 @@ class SQLAlchemyBookingRepository(BookingRepository):
             self._logger,
             "SELECT",
             "BookingModel",
-            extra={"appointment_date": str(appointment_date), "operation": "availability_check"}
+            extra={
+                "appointment_date": str(appointment_date),
+                "operation": "availability_check",
+            },
         )
 
         # Check if there are any conflicting bookings
         stmt = select(func.count(BookingModel.id)).where(
             and_(
                 BookingModel.appointment_date == appointment_date,
-                BookingModel.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED])
+                BookingModel.status.in_(
+                    [BookingStatus.PENDING, BookingStatus.CONFIRMED]
+                ),
             )
         )
 
@@ -162,8 +191,8 @@ class SQLAlchemyBookingRepository(BookingRepository):
             extra={
                 "appointment_date": str(appointment_date),
                 "booking_count": booking_count,
-                "is_available": is_available
-            }
+                "is_available": is_available,
+            },
         )
         return is_available
 
@@ -173,7 +202,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
             self._logger,
             "DELETE",
             "BookingModel",
-            extra={"booking_id": str(booking_id)}
+            extra={"booking_id": str(booking_id)},
         )
 
         stmt = delete(BookingModel).where(BookingModel.id == booking_id)
@@ -183,12 +212,12 @@ class SQLAlchemyBookingRepository(BookingRepository):
         if success:
             self._logger.info(
                 "Booking deleted successfully",
-                extra={"booking_id": str(booking_id), "rows_affected": result.rowcount}
+                extra={"booking_id": str(booking_id), "rows_affected": result.rowcount},
             )
         else:
             self._logger.warning(
                 "Booking deletion failed - not found",
-                extra={"booking_id": str(booking_id)}
+                extra={"booking_id": str(booking_id)},
             )
 
         return success
@@ -202,7 +231,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
             status=model.status,
             user_id=model.user_id,
             created_at=model.created_at,
-            updated_at=model.updated_at
+            updated_at=model.updated_at,
         )
 
     def _slot_model_to_value_object(self, model: TimeSlotModel) -> TimeSlot:
@@ -213,7 +242,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
             end_time=model.end_time.time(),
             is_available=model.is_available,
             max_bookings=model.max_bookings,
-            current_bookings=model.current_bookings
+            current_bookings=model.current_bookings,
         )
 
     def _generate_default_slots(self, target_date: date) -> List[TimeSlot]:
@@ -231,7 +260,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
                 end_time=end_time,
                 is_available=True,
                 max_bookings=1,
-                current_bookings=0
+                current_bookings=0,
             )
             slots.append(slot)
 
@@ -247,7 +276,9 @@ class SQLAlchemyVehicleRepository(VehicleRepository):
     async def save(self, vehicle: Vehicle) -> Vehicle:
         """Save a vehicle to the database."""
         # Check if vehicle exists
-        stmt = select(VehicleModel).where(VehicleModel.license_plate == vehicle.license_plate)
+        stmt = select(VehicleModel).where(
+            VehicleModel.license_plate == vehicle.license_plate
+        )
         result = await self._session.execute(stmt)
         existing_vehicle = result.scalar_one_or_none()
 
@@ -267,7 +298,7 @@ class SQLAlchemyVehicleRepository(VehicleRepository):
                 year=vehicle.year,
                 vehicle_type=vehicle.__class__.__name__.lower(),
                 created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                updated_at=datetime.utcnow(),
             )
             self._session.add(vehicle_model)
 
@@ -276,7 +307,9 @@ class SQLAlchemyVehicleRepository(VehicleRepository):
 
     async def find_by_license_plate(self, license_plate: str) -> Optional[Vehicle]:
         """Find vehicle by license plate."""
-        stmt = select(VehicleModel).where(VehicleModel.license_plate == license_plate.upper())
+        stmt = select(VehicleModel).where(
+            VehicleModel.license_plate == license_plate.upper()
+        )
         result = await self._session.execute(stmt)
         vehicle_model = result.scalar_one_or_none()
 
@@ -295,7 +328,9 @@ class SQLAlchemyVehicleRepository(VehicleRepository):
 
     async def delete(self, license_plate: str) -> bool:
         """Delete a vehicle."""
-        stmt = delete(VehicleModel).where(VehicleModel.license_plate == license_plate.upper())
+        stmt = delete(VehicleModel).where(
+            VehicleModel.license_plate == license_plate.upper()
+        )
         result = await self._session.execute(stmt)
 
         return result.rowcount > 0
@@ -307,14 +342,14 @@ class SQLAlchemyVehicleRepository(VehicleRepository):
                 license_plate=model.license_plate,
                 make=model.make,
                 model=model.model,
-                year=model.year
+                year=model.year,
             )
         elif model.vehicle_type == "motorcycle":
             return Motorcycle(
                 license_plate=model.license_plate,
                 make=model.make,
                 model=model.model,
-                year=model.year
+                year=model.year,
             )
         else:
             # Default to Car if unknown type
@@ -322,7 +357,7 @@ class SQLAlchemyVehicleRepository(VehicleRepository):
                 license_plate=model.license_plate,
                 make=model.make,
                 model=model.model,
-                year=model.year
+                year=model.year,
             )
 
 
@@ -347,7 +382,7 @@ class SQLAlchemyUserRepository(UserRepository):
             "first_name": user_model.first_name,
             "last_name": user_model.last_name,
             "phone": user_model.phone,
-            "is_active": user_model.is_active
+            "is_active": user_model.is_active,
         }
 
     async def exists(self, user_id: UUID) -> bool:
@@ -379,7 +414,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
                 self._logger,
                 "UPDATE",
                 "InspectorModel",
-                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+                extra={"inspector_id": str(inspector.id), "email": inspector.email},
             )
 
             existing_inspector.email = inspector.email
@@ -394,7 +429,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
             self._logger.info(
                 "Inspector updated successfully",
-                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+                extra={"inspector_id": str(inspector.id), "email": inspector.email},
             )
         else:
             # Create new inspector
@@ -402,7 +437,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
                 self._logger,
                 "INSERT",
                 "InspectorModel",
-                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+                extra={"inspector_id": str(inspector.id), "email": inspector.email},
             )
 
             inspector_model = InspectorModel(
@@ -417,13 +452,13 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
                 hire_date=inspector.hire_date,
                 password_hash="",  # Will be set separately
                 created_at=inspector.created_at,
-                updated_at=datetime.utcnow()
+                updated_at=datetime.utcnow(),
             )
             self._session.add(inspector_model)
 
             self._logger.info(
                 "New inspector created successfully",
-                extra={"inspector_id": str(inspector.id), "email": inspector.email}
+                extra={"inspector_id": str(inspector.id), "email": inspector.email},
             )
 
         await self._session.flush()
@@ -435,7 +470,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             self._logger,
             "SELECT",
             "InspectorModel",
-            extra={"inspector_id": str(inspector_id), "lookup_field": "id"}
+            extra={"inspector_id": str(inspector_id), "lookup_field": "id"},
         )
 
         stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
@@ -444,14 +479,13 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
         if not inspector_model:
             self._logger.debug(
-                "Inspector not found by ID",
-                extra={"inspector_id": str(inspector_id)}
+                "Inspector not found by ID", extra={"inspector_id": str(inspector_id)}
             )
             return None
 
         self._logger.debug(
             "Inspector found by ID",
-            extra={"inspector_id": str(inspector_id), "email": inspector_model.email}
+            extra={"inspector_id": str(inspector_id), "email": inspector_model.email},
         )
         return self._model_to_entity(inspector_model)
 
@@ -462,7 +496,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             self._logger,
             "SELECT",
             "InspectorModel",
-            extra={"email": sanitized_email, "lookup_field": "email"}
+            extra={"email": sanitized_email, "lookup_field": "email"},
         )
 
         stmt = select(InspectorModel).where(InspectorModel.email == sanitized_email)
@@ -471,14 +505,13 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
         if not inspector_model:
             self._logger.debug(
-                "Inspector not found by email",
-                extra={"email": sanitized_email}
+                "Inspector not found by email", extra={"email": sanitized_email}
             )
             return None
 
         self._logger.debug(
             "Inspector found by email",
-            extra={"email": sanitized_email, "inspector_id": str(inspector_model.id)}
+            extra={"email": sanitized_email, "inspector_id": str(inspector_model.id)},
         )
         return self._model_to_entity(inspector_model)
 
@@ -489,23 +522,31 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             self._logger,
             "SELECT",
             "InspectorModel",
-            extra={"license_number": sanitized_license, "lookup_field": "license_number"}
+            extra={
+                "license_number": sanitized_license,
+                "lookup_field": "license_number",
+            },
         )
 
-        stmt = select(InspectorModel).where(InspectorModel.license_number == sanitized_license)
+        stmt = select(InspectorModel).where(
+            InspectorModel.license_number == sanitized_license
+        )
         result = await self._session.execute(stmt)
         inspector_model = result.scalar_one_or_none()
 
         if not inspector_model:
             self._logger.debug(
                 "Inspector not found by license number",
-                extra={"license_number": sanitized_license}
+                extra={"license_number": sanitized_license},
             )
             return None
 
         self._logger.debug(
             "Inspector found by license number",
-            extra={"license_number": sanitized_license, "inspector_id": str(inspector_model.id)}
+            extra={
+                "license_number": sanitized_license,
+                "inspector_id": str(inspector_model.id),
+            },
         )
         return self._model_to_entity(inspector_model)
 
@@ -515,23 +556,26 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             self._logger,
             "SELECT",
             "InspectorModel",
-            extra={"filter": "status=ACTIVE", "operation": "find_all_active"}
+            extra={"filter": "status=ACTIVE", "operation": "find_all_active"},
         )
 
-        stmt = select(InspectorModel).where(
-            InspectorModel.status == InspectorStatus.ACTIVE
-        ).order_by(InspectorModel.last_name, InspectorModel.first_name)
+        stmt = (
+            select(InspectorModel)
+            .where(InspectorModel.status == InspectorStatus.ACTIVE)
+            .order_by(InspectorModel.last_name, InspectorModel.first_name)
+        )
 
         result = await self._session.execute(stmt)
         inspector_models = result.scalars().all()
 
         self._logger.info(
-            "Found active inspectors",
-            extra={"count": len(inspector_models)}
+            "Found active inspectors", extra={"count": len(inspector_models)}
         )
         return [self._model_to_entity(model) for model in inspector_models]
 
-    async def update_password_hash(self, inspector_id: UUID, password_hash: str) -> bool:
+    async def update_password_hash(
+        self, inspector_id: UUID, password_hash: str
+    ) -> bool:
         """Update inspector password hash."""
         stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
         result = await self._session.execute(stmt)
@@ -546,7 +590,12 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
         return True
 
-    async def update_login_info(self, inspector_id: UUID, failed_attempts: int = 0, locked_until: Optional[datetime] = None) -> bool:
+    async def update_login_info(
+        self,
+        inspector_id: UUID,
+        failed_attempts: int = 0,
+        locked_until: Optional[datetime] = None,
+    ) -> bool:
         """Update inspector login information."""
         stmt = select(InspectorModel).where(InspectorModel.id == inspector_id)
         result = await self._session.execute(stmt)
@@ -581,20 +630,26 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
 
     async def get_password_hash(self, inspector_id: UUID) -> Optional[str]:
         """Get password hash for inspector."""
-        stmt = select(InspectorModel.password_hash).where(InspectorModel.id == inspector_id)
+        stmt = select(InspectorModel.password_hash).where(
+            InspectorModel.id == inspector_id
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_failed_attempts(self, inspector_id: UUID) -> int:
         """Get number of failed login attempts."""
-        stmt = select(InspectorModel.failed_login_attempts).where(InspectorModel.id == inspector_id)
+        stmt = select(InspectorModel.failed_login_attempts).where(
+            InspectorModel.id == inspector_id
+        )
         result = await self._session.execute(stmt)
         failed_attempts = result.scalar_one_or_none()
         return failed_attempts or 0
 
     async def get_lockout_expiry(self, inspector_id: UUID) -> Optional[datetime]:
         """Get account lockout expiry time."""
-        stmt = select(InspectorModel.locked_until).where(InspectorModel.id == inspector_id)
+        stmt = select(InspectorModel.locked_until).where(
+            InspectorModel.id == inspector_id
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -611,7 +666,7 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             phone=model.phone,
             hire_date=model.hire_date,
             created_at=model.created_at,
-            updated_at=model.updated_at
+            updated_at=model.updated_at,
         )
 
 
@@ -631,16 +686,24 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
         if existing_inspection:
             # Update existing inspection
-            log_database_operation(self._logger, "UPDATE", "inspections",
-                                 inspection_id=str(inspection.id),
-                                 license_plate=inspection.license_plate)
+            log_database_operation(
+                self._logger,
+                "UPDATE",
+                "inspections",
+                inspection_id=str(inspection.id),
+                license_plate=inspection.license_plate,
+            )
             self._update_model_from_entity(existing_inspection, inspection)
             existing_inspection.updated_at = datetime.utcnow()
         else:
             # Create new inspection
-            log_database_operation(self._logger, "INSERT", "inspections",
-                                 inspection_id=str(inspection.id),
-                                 license_plate=inspection.license_plate)
+            log_database_operation(
+                self._logger,
+                "INSERT",
+                "inspections",
+                inspection_id=str(inspection.id),
+                license_plate=inspection.license_plate,
+            )
             inspection_model = self._entity_to_model(inspection)
             self._session.add(inspection_model)
 
@@ -649,8 +712,9 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
     async def find_by_id(self, inspection_id: UUID) -> Optional[Inspection]:
         """Find inspection by ID."""
-        log_database_operation(self._logger, "SELECT", "inspections",
-                             inspection_id=str(inspection_id))
+        log_database_operation(
+            self._logger, "SELECT", "inspections", inspection_id=str(inspection_id)
+        )
         stmt = select(InspectionModel).where(InspectionModel.id == inspection_id)
         result = await self._session.execute(stmt)
         inspection_model = result.scalar_one_or_none()
@@ -664,22 +728,29 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
         """Find all inspections for a license plate (ordered by created_at DESC)."""
         normalized_plate = license_plate.upper().replace(" ", "").replace("-", "")
 
-        stmt = select(InspectionModel).where(
-            InspectionModel.license_plate == normalized_plate
-        ).order_by(desc(InspectionModel.created_at))
+        stmt = (
+            select(InspectionModel)
+            .where(InspectionModel.license_plate == normalized_plate)
+            .order_by(desc(InspectionModel.created_at))
+        )
 
         result = await self._session.execute(stmt)
         inspection_models = result.scalars().all()
 
         return [self._model_to_entity(model) for model in inspection_models]
 
-    async def find_latest_by_license_plate(self, license_plate: str) -> Optional[Inspection]:
+    async def find_latest_by_license_plate(
+        self, license_plate: str
+    ) -> Optional[Inspection]:
         """Find the most recent inspection for a license plate."""
         normalized_plate = license_plate.upper().replace(" ", "").replace("-", "")
 
-        stmt = select(InspectionModel).where(
-            InspectionModel.license_plate == normalized_plate
-        ).order_by(desc(InspectionModel.created_at)).limit(1)
+        stmt = (
+            select(InspectionModel)
+            .where(InspectionModel.license_plate == normalized_plate)
+            .order_by(desc(InspectionModel.created_at))
+            .limit(1)
+        )
 
         result = await self._session.execute(stmt)
         inspection_model = result.scalar_one_or_none()
@@ -691,9 +762,11 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
     async def find_by_inspector(self, inspector_id: UUID) -> List[Inspection]:
         """Find all inspections performed by a specific inspector."""
-        stmt = select(InspectionModel).where(
-            InspectionModel.inspector_id == inspector_id
-        ).order_by(desc(InspectionModel.created_at))
+        stmt = (
+            select(InspectionModel)
+            .where(InspectionModel.inspector_id == inspector_id)
+            .order_by(desc(InspectionModel.created_at))
+        )
 
         result = await self._session.execute(stmt)
         inspection_models = result.scalars().all()
@@ -702,20 +775,26 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
     async def find_by_status(self, status: str) -> List[Inspection]:
         """Find all inspections with a specific status (draft/completed)."""
-        stmt = select(InspectionModel).where(
-            InspectionModel.status == InspectionStatus(status)
-        ).order_by(desc(InspectionModel.created_at))
+        stmt = (
+            select(InspectionModel)
+            .where(InspectionModel.status == InspectionStatus(status))
+            .order_by(desc(InspectionModel.created_at))
+        )
 
         result = await self._session.execute(stmt)
         inspection_models = result.scalars().all()
 
         return [self._model_to_entity(model) for model in inspection_models]
 
-    async def find_completed_inspections(self, limit: Optional[int] = None) -> List[Inspection]:
+    async def find_completed_inspections(
+        self, limit: Optional[int] = None
+    ) -> List[Inspection]:
         """Find completed inspections, optionally limited by count."""
-        stmt = select(InspectionModel).where(
-            InspectionModel.status == InspectionStatus.COMPLETED
-        ).order_by(desc(InspectionModel.completed_at))
+        stmt = (
+            select(InspectionModel)
+            .where(InspectionModel.status == InspectionStatus.COMPLETED)
+            .order_by(desc(InspectionModel.completed_at))
+        )
 
         if limit:
             stmt = stmt.limit(limit)
@@ -725,14 +804,20 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
         return [self._model_to_entity(model) for model in inspection_models]
 
-    async def find_draft_inspections_by_inspector(self, inspector_id: UUID) -> List[Inspection]:
+    async def find_draft_inspections_by_inspector(
+        self, inspector_id: UUID
+    ) -> List[Inspection]:
         """Find all draft inspections for a specific inspector."""
-        stmt = select(InspectionModel).where(
-            and_(
-                InspectionModel.inspector_id == inspector_id,
-                InspectionModel.status == InspectionStatus.DRAFT
+        stmt = (
+            select(InspectionModel)
+            .where(
+                and_(
+                    InspectionModel.inspector_id == inspector_id,
+                    InspectionModel.status == InspectionStatus.DRAFT,
+                )
             )
-        ).order_by(desc(InspectionModel.updated_at))
+            .order_by(desc(InspectionModel.updated_at))
+        )
 
         result = await self._session.execute(stmt)
         inspection_models = result.scalars().all()
@@ -794,13 +879,19 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
         # Deserialize checkpoint scores from JSON
         checkpoint_scores = []
         if model.checkpoint_scores:
-            scores_data = json.loads(model.checkpoint_scores) if isinstance(model.checkpoint_scores, str) else model.checkpoint_scores
+            scores_data = (
+                json.loads(model.checkpoint_scores)
+                if isinstance(model.checkpoint_scores, str)
+                else model.checkpoint_scores
+            )
             for score_data in scores_data:
-                checkpoint_scores.append(CheckpointScore(
-                    checkpoint_type=CheckpointType(score_data['checkpoint_type']),
-                    score=score_data['score'],
-                    notes=score_data.get('notes', '')
-                ))
+                checkpoint_scores.append(
+                    CheckpointScore(
+                        checkpoint_type=CheckpointType(score_data["checkpoint_type"]),
+                        score=score_data["score"],
+                        notes=score_data.get("notes", ""),
+                    )
+                )
 
         return Inspection(
             license_plate=model.license_plate,
@@ -812,7 +903,7 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
             status=model.status,
             created_at=model.created_at,
             updated_at=model.updated_at,
-            completed_at=model.completed_at
+            completed_at=model.completed_at,
         )
 
     def _entity_to_model(self, inspection: Inspection) -> InspectionModel:
@@ -822,50 +913,68 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
         if inspection.checkpoint_scores:
             scores_data = []
             for score in inspection.checkpoint_scores:
-                scores_data.append({
-                    'checkpoint_type': score.checkpoint_type.value,
-                    'score': score.score,
-                    'notes': score.notes
-                })
+                scores_data.append(
+                    {
+                        "checkpoint_type": score.checkpoint_type.value,
+                        "score": score.score,
+                        "notes": score.notes,
+                    }
+                )
             checkpoint_scores_json = json.dumps(scores_data)
 
         return InspectionModel(
             id=inspection.id,
-            license_plate=inspection.license_plate.upper().replace(" ", "").replace("-", ""),
+            license_plate=inspection.license_plate.upper()
+            .replace(" ", "")
+            .replace("-", ""),
             vehicle_type=inspection.vehicle_type,
             inspector_id=inspection.inspector_id,
             checkpoint_scores=checkpoint_scores_json,
-            total_score=inspection.get_total_score() if inspection.checkpoint_scores else None,
-            is_safe=inspection.is_safe() if inspection.checkpoint_scores else None,
-            requires_reinspection=inspection.requires_reinspection() if inspection.checkpoint_scores else None,
+            total_score=inspection.get_total_score()
+            if inspection.checkpoint_scores
+            else None,
+            is_safe=inspection.is_safe if inspection.checkpoint_scores else None,
+            requires_reinspection=inspection.requires_reinspection
+            if inspection.checkpoint_scores
+            else None,
             observations=inspection.observations,
             status=inspection.status,
             created_at=inspection.created_at,
             updated_at=inspection.updated_at,
-            completed_at=inspection.completed_at
+            completed_at=inspection.completed_at,
         )
 
-    def _update_model_from_entity(self, model: InspectionModel, inspection: Inspection) -> None:
+    def _update_model_from_entity(
+        self, model: InspectionModel, inspection: Inspection
+    ) -> None:
         """Update database model fields from domain entity."""
         # Serialize checkpoint scores to JSON
         checkpoint_scores_json = None
         if inspection.checkpoint_scores:
             scores_data = []
             for score in inspection.checkpoint_scores:
-                scores_data.append({
-                    'checkpoint_type': score.checkpoint_type.value,
-                    'score': score.score,
-                    'notes': score.notes
-                })
+                scores_data.append(
+                    {
+                        "checkpoint_type": score.checkpoint_type.value,
+                        "score": score.score,
+                        "notes": score.notes,
+                    }
+                )
             checkpoint_scores_json = json.dumps(scores_data)
 
-        model.license_plate = inspection.license_plate.upper().replace(" ", "").replace("-", "")
+        model.license_plate = (
+            inspection.license_plate.upper().replace(" ", "").replace("-", "")
+        )
         model.vehicle_type = inspection.vehicle_type
         model.inspector_id = inspection.inspector_id
         model.checkpoint_scores = checkpoint_scores_json
-        model.total_score = inspection.get_total_score() if inspection.checkpoint_scores else None
-        model.is_safe = inspection.is_safe() if inspection.checkpoint_scores else None
-        model.requires_reinspection = inspection.requires_reinspection() if inspection.checkpoint_scores else None
+        model.total_score = (
+            inspection.get_total_score() if inspection.checkpoint_scores else None
+        )
+        model.is_safe = inspection.is_safe if inspection.checkpoint_scores else None
+        model.requires_reinspection = (
+            inspection.requires_reinspection if inspection.checkpoint_scores else None
+        )
         model.observations = inspection.observations
         model.status = inspection.status
         model.completed_at = inspection.completed_at
@@ -903,7 +1012,8 @@ class InMemoryAuthTokenRepository(AuthTokenRepository):
         """Clean up expired tokens."""
         try:
             expired_tokens = [
-                token for token, auth_token in self._tokens.items()
+                token
+                for token, auth_token in self._tokens.items()
                 if auth_token.is_expired
             ]
 

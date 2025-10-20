@@ -13,6 +13,7 @@ from .vehicle import VehicleType
 
 class InspectionStatus(Enum):
     """Inspection status enumeration."""
+
     DRAFT = "draft"
     COMPLETED = "completed"
 
@@ -30,7 +31,10 @@ class Inspection:
         observations: str = "",
         status: InspectionStatus = InspectionStatus.DRAFT,
         created_at: Optional[datetime] = None,
-        updated_at: Optional[datetime] = None
+        updated_at: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
+        is_safe: bool = False,
+        requires_reinspection: bool = False,
     ):
         """Initialize inspection entity."""
         # Validate required fields
@@ -50,6 +54,11 @@ class Inspection:
         self._status = status
         self._created_at = created_at or datetime.utcnow()
         self._updated_at = updated_at or datetime.utcnow()
+        self._completed_at = completed_at  # Will be set when inspection is completed
+        self._is_safe = is_safe  # Will be calculated based on scores
+        self._requires_reinspection = (
+            requires_reinspection  # Will be calculated based on scores
+        )
 
         # Validate checkpoint scores if provided
         self._validate_checkpoint_scores()
@@ -96,8 +105,13 @@ class Inspection:
 
     @property
     def updated_at(self) -> datetime:
-        """Get last update timestamp."""
+        """Get last updated timestamp."""
         return self._updated_at
+
+    @property
+    def completed_at(self) -> Optional[datetime]:
+        """Get completion timestamp."""
+        return self._completed_at
 
     def update_checkpoint_scores(self, scores: List[CheckpointScore]) -> None:
         """Update checkpoint scores."""
@@ -132,7 +146,8 @@ class Inspection:
 
         # Remove existing score for this checkpoint type if it exists
         self._checkpoint_scores = [
-            s for s in self._checkpoint_scores
+            s
+            for s in self._checkpoint_scores
             if s.checkpoint_type != score.checkpoint_type
         ]
 
@@ -165,6 +180,7 @@ class Inspection:
 
         self._status = InspectionStatus.COMPLETED
         self._updated_at = datetime.utcnow()
+        self._completed_at = datetime.utcnow()
 
     def calculate_safety_result(self) -> SafetyResult:
         """Calculate safety result based on checkpoint scores."""
@@ -180,14 +196,14 @@ class Inspection:
                 license_plate=self._license_plate,
                 make="Unknown",  # Placeholder for calculation
                 model="Unknown",  # Placeholder for calculation
-                year=2020  # Placeholder for calculation
+                year=2020,  # Placeholder for calculation
             )
         else:  # VehicleType.MOTORCYCLE
             vehicle = Motorcycle(
                 license_plate=self._license_plate,
                 make="Unknown",  # Placeholder for calculation
                 model="Unknown",  # Placeholder for calculation
-                year=2020  # Placeholder for calculation
+                year=2020,  # Placeholder for calculation
             )
 
         return vehicle.calculate_safety(self._checkpoint_scores)
@@ -204,7 +220,9 @@ class Inspection:
         """Check if inspection has any critical failures (scores < 5)."""
         return any(score.is_critical_failure for score in self._checkpoint_scores)
 
-    def get_checkpoint_score(self, checkpoint_type: CheckpointType) -> Optional[CheckpointScore]:
+    def get_checkpoint_score(
+        self, checkpoint_type: CheckpointType
+    ) -> Optional[CheckpointScore]:
         """Get score for a specific checkpoint type."""
         for score in self._checkpoint_scores:
             if score.checkpoint_type == checkpoint_type:
@@ -218,6 +236,22 @@ class Inspection:
     def is_completed(self) -> bool:
         """Check if inspection is completed."""
         return self._status == InspectionStatus.COMPLETED
+
+    @property
+    def is_safe(self) -> bool:
+        """Check if vehicle is safe based on inspection scores."""
+        if self._status != InspectionStatus.COMPLETED:
+            return False
+        safety_result = self.calculate_safety_result()
+        return safety_result.is_safe
+
+    @property
+    def requires_reinspection(self) -> bool:
+        """Check if vehicle requires reinspection."""
+        if self._status != InspectionStatus.COMPLETED:
+            return False
+        safety_result = self.calculate_safety_result()
+        return safety_result.requires_reinspection
 
     def get_scores_by_checkpoint(self) -> Dict[CheckpointType, CheckpointScore]:
         """Get scores organized by checkpoint type."""
@@ -255,13 +289,17 @@ class Inspection:
     def _has_all_required_checkpoints(self) -> bool:
         """Check if all required checkpoints have scores."""
         required_checkpoints = set(self._get_required_checkpoints())
-        scored_checkpoints = {score.checkpoint_type for score in self._checkpoint_scores}
+        scored_checkpoints = {
+            score.checkpoint_type for score in self._checkpoint_scores
+        }
         return required_checkpoints.issubset(scored_checkpoints)
 
     def _get_missing_checkpoints(self) -> List[str]:
         """Get list of missing checkpoint names."""
         required_checkpoints = set(self._get_required_checkpoints())
-        scored_checkpoints = {score.checkpoint_type for score in self._checkpoint_scores}
+        scored_checkpoints = {
+            score.checkpoint_type for score in self._checkpoint_scores
+        }
         missing = required_checkpoints - scored_checkpoints
         return [checkpoint.value for checkpoint in missing]
 
