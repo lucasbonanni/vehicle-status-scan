@@ -1,0 +1,28 @@
+[importlinter]
+root_package = src.vehicle_inspection
+
+[importlinter:contract:1]
+name = Domain Layer Independence
+type = forbidden
+source_modules =
+    src.vehicle_inspection.domain
+forbidden_modules =
+    src.vehicle_inspection.application
+    src.vehicle_inspection.infrastructure
+    src.vehicle_inspection.presentation
+
+[importlinter:contract:2]
+name = Application Layer Cannot Import From Infrastructure Models
+type = forbidden
+source_modules =
+    src.vehicle_inspection.application.services
+forbidden_modules =
+    src.vehicle_inspection.infrastructure.database.models
+
+[importlinter:contract:3]
+name = Infrastructure Cannot Depend on Presentation
+type = forbidden
+source_modules =
+    src.vehicle_inspection.infrastructure
+forbidden_modules =
+    src.vehicle_inspection.presentation

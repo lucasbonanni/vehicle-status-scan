@@ -6,14 +6,16 @@ import json
 import sys
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Optional
 from contextvars import ContextVar
 from pathlib import Path
 import os
 
 
 # Context variable for correlation ID tracking across async requests
-correlation_id_context: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
+correlation_id_context: ContextVar[Optional[str]] = ContextVar(
+    "correlation_id", default=None
+)
 
 
 class CorrelationIDFilter(logging.Filter):
@@ -41,13 +43,13 @@ class JSONFormatter(logging.Formatter):
             "service": self.service_name,
             "logger": record.name,
             "message": record.getMessage(),
-            "correlation_id": getattr(record, 'correlation_id', 'unknown'),
+            "correlation_id": getattr(record, "correlation_id", "unknown"),
         }
 
         # Add module and function info
         if record.module:
             log_entry["module"] = record.module
-        if record.funcName and record.funcName != '<module>':
+        if record.funcName and record.funcName != "<module>":
             log_entry["function"] = record.funcName
         if record.lineno:
             log_entry["line"] = record.lineno
@@ -57,17 +59,37 @@ class JSONFormatter(logging.Formatter):
             log_entry["exception"] = {
                 "type": record.exc_info[0].__name__ if record.exc_info[0] else None,
                 "message": str(record.exc_info[1]) if record.exc_info[1] else None,
-                "traceback": self.formatException(record.exc_info) if record.exc_info else None
+                "traceback": self.formatException(record.exc_info)
+                if record.exc_info
+                else None,
             }
 
         # Add extra fields from the log record
         extra_fields = {}
         for key, value in record.__dict__.items():
             if key not in [
-                'name', 'msg', 'args', 'levelname', 'levelno', 'pathname', 'filename',
-                'module', 'lineno', 'funcName', 'created', 'msecs', 'relativeCreated',
-                'thread', 'threadName', 'processName', 'process', 'message', 'exc_info',
-                'exc_text', 'stack_info', 'correlation_id'
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+                "message",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "correlation_id",
             ]:
                 extra_fields[key] = value
 
@@ -80,14 +102,16 @@ class JSONFormatter(logging.Formatter):
 class LoggingConfig:
     """Centralized logging configuration."""
 
-    def __init__(self,
-                 log_level: str = "INFO",
-                 service_name: str = "vehicle-inspection-system",
-                 log_dir: Optional[str] = None,
-                 max_file_size: int = 10 * 1024 * 1024,  # 10MB
-                 backup_count: int = 5,
-                 enable_console: bool = True,
-                 enable_file: bool = True):
+    def __init__(
+        self,
+        log_level: str = "INFO",
+        service_name: str = "vehicle-inspection-system",
+        log_dir: Optional[str] = None,
+        max_file_size: int = 10 * 1024 * 1024,  # 10MB
+        backup_count: int = 5,
+        enable_console: bool = True,
+        enable_file: bool = True,
+    ):
         """
         Initialize logging configuration.
 
@@ -150,7 +174,7 @@ class LoggingConfig:
                 filename=log_file,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
-                encoding='utf-8'
+                encoding="utf-8",
             )
             file_handler.setLevel(self.log_level)
             file_handler.addFilter(correlation_filter)
@@ -164,7 +188,7 @@ class LoggingConfig:
                 filename=error_log_file,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
-                encoding='utf-8'
+                encoding="utf-8",
             )
             error_handler.setLevel(logging.ERROR)
             error_handler.addFilter(correlation_filter)
@@ -177,18 +201,18 @@ class LoggingConfig:
     def _configure_third_party_loggers(self) -> None:
         """Configure third-party library loggers to reduce noise."""
         # SQLAlchemy
-        logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
-        logging.getLogger('sqlalchemy.dialects').setLevel(logging.WARNING)
-        logging.getLogger('sqlalchemy.pool').setLevel(logging.WARNING)
-        logging.getLogger('sqlalchemy.orm').setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy.dialects").setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy.orm").setLevel(logging.WARNING)
 
         # FastAPI/Uvicorn
-        logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
-        logging.getLogger('fastapi').setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("fastapi").setLevel(logging.WARNING)
 
         # HTTP libraries
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        logging.getLogger('requests').setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("requests").setLevel(logging.WARNING)
 
 
 def generate_correlation_id() -> str:
@@ -219,13 +243,13 @@ def get_logger(name: str) -> logging.Logger:
 def setup_logging_from_env() -> LoggingConfig:
     """Setup logging configuration from environment variables."""
     config = LoggingConfig(
-        log_level=os.getenv('LOG_LEVEL', 'INFO'),
-        service_name=os.getenv('SERVICE_NAME', 'vehicle-inspection-system'),
-        log_dir=os.getenv('LOG_DIR'),
-        max_file_size=int(os.getenv('LOG_MAX_FILE_SIZE', '10485760')),  # 10MB
-        backup_count=int(os.getenv('LOG_BACKUP_COUNT', '5')),
-        enable_console=os.getenv('LOG_ENABLE_CONSOLE', 'true').lower() == 'true',
-        enable_file=os.getenv('LOG_ENABLE_FILE', 'true').lower() == 'true'
+        log_level=os.getenv("LOG_LEVEL", "INFO"),
+        service_name=os.getenv("SERVICE_NAME", "vehicle-inspection-system"),
+        log_dir=os.getenv("LOG_DIR"),
+        max_file_size=int(os.getenv("LOG_MAX_FILE_SIZE", "10485760")),  # 10MB
+        backup_count=int(os.getenv("LOG_BACKUP_COUNT", "5")),
+        enable_console=os.getenv("LOG_ENABLE_CONSOLE", "true").lower() == "true",
+        enable_file=os.getenv("LOG_ENABLE_FILE", "true").lower() == "true",
     )
 
     config.setup_logging()
@@ -246,11 +270,18 @@ def log_request(logger: logging.Logger, method: str, path: str, **extra) -> None
         f"HTTP Request: {method} {path}",
         request_method=method,
         request_path=path,
-        **extra
+        **extra,
     )
 
 
-def log_response(logger: logging.Logger, method: str, path: str, status_code: int, duration_ms: float, **extra) -> None:
+def log_response(
+    logger: logging.Logger,
+    method: str,
+    path: str,
+    status_code: int,
+    duration_ms: float,
+    **extra,
+) -> None:
     """Log an HTTP response."""
     log_with_extra(
         logger,
@@ -260,11 +291,13 @@ def log_response(logger: logging.Logger, method: str, path: str, status_code: in
         request_path=path,
         response_status=status_code,
         response_duration_ms=duration_ms,
-        **extra
+        **extra,
     )
 
 
-def log_database_operation(logger: logging.Logger, operation: str, table: str, **extra) -> None:
+def log_database_operation(
+    logger: logging.Logger, operation: str, table: str, **extra
+) -> None:
     """Log a database operation."""
     log_with_extra(
         logger,
@@ -272,11 +305,13 @@ def log_database_operation(logger: logging.Logger, operation: str, table: str, *
         f"Database {operation}: {table}",
         db_operation=operation,
         db_table=table,
-        **extra
+        **extra,
     )
 
 
-def log_authentication_attempt(logger: logging.Logger, email: str, success: bool, **extra) -> None:
+def log_authentication_attempt(
+    logger: logging.Logger, email: str, success: bool, **extra
+) -> None:
     """Log an authentication attempt."""
     level = logging.INFO if success else logging.WARNING
     status = "successful" if success else "failed"
@@ -286,11 +321,13 @@ def log_authentication_attempt(logger: logging.Logger, email: str, success: bool
         f"Authentication attempt {status} for {email}",
         auth_email=email,
         auth_success=success,
-        **extra
+        **extra,
     )
 
 
-def log_business_rule_violation(logger: logging.Logger, rule: str, details: str, **extra) -> None:
+def log_business_rule_violation(
+    logger: logging.Logger, rule: str, details: str, **extra
+) -> None:
     """Log a business rule violation."""
     log_with_extra(
         logger,
@@ -298,7 +335,7 @@ def log_business_rule_violation(logger: logging.Logger, rule: str, details: str,
         f"Business rule violation: {rule} - {details}",
         business_rule=rule,
         violation_details=details,
-        **extra
+        **extra,
     )
 
 
