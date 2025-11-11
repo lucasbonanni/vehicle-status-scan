@@ -1,29 +1,34 @@
 """
 Authentication middleware for the vehicle inspection API.
 
-This module provides authentication and authorization functionality
+This module provides JWT-based authentication and authorization functionality
 for protecting API endpoints that require inspector authentication.
+
+Follows FastAPI OAuth2 with JWT best practices:
+https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/
 """
 
 from typing import Optional
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+from jose import jwt
 import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from ....domain.entities.inspector import Inspector
-from ....domain.value_objects.auth import LoginCredentials
+from ....domain.value_objects.auth import LoginCredentials, TokenGenerator
 
 
 # Security scheme for bearer token authentication
 security = HTTPBearer()
 
-# JWT configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 8
+# JWT configuration - Load from environment variables
+JWT_SECRET_KEY = os.getenv(
+    "JWT_SECRET_KEY", "your-super-secret-key-change-in-production"
+)
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "8"))
 
 
 class AuthenticationError(Exception):
@@ -65,24 +70,19 @@ async def get_current_inspector(
         )
 
     try:
-        # Decode JWT token
-        payload = jwt.decode(
-            credentials.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
+        # Verify and decode JWT token
+        payload = TokenGenerator.verify_jwt_token(
+            token=credentials.credentials,
+            secret_key=JWT_SECRET_KEY,
+            algorithm=JWT_ALGORITHM,
         )
 
-        # Extract inspector ID from token
+        # Extract inspector ID from token subject (sub)
         inspector_id: str = payload.get("sub")
         if inspector_id is None:
             raise AuthenticationError("Invalid token: missing subject")
 
-        # Check token expiration
-        exp = payload.get("exp")
-        if exp and datetime.fromtimestamp(exp, timezone.utc) < datetime.now(
-            timezone.utc
-        ):
-            raise AuthenticationError("Token has expired")
-
-    except JWTError as e:
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid authentication token: {str(e)}",
