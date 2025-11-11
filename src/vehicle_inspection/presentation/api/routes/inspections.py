@@ -384,20 +384,27 @@ async def list_inspections(
 
         service_factory = get_service_factory()
         async with service_factory.get_inspection_service() as inspection_service:
-            inspections = await inspection_service.list_inspections_by_inspector(
-                inspector_id=str(current_inspector.id), limit=limit
+            inspections = await inspection_service.get_inspections_by_inspector(
+                inspector_id=str(current_inspector.id)
             )
+            # Apply limit to the results
+            if limit:
+                inspections = inspections[:limit]
 
             inspection_responses = [
                 InspectionResponse(
                     id=inspection.id,
                     license_plate=inspection.license_plate,
-                    vehicle_type=inspection.vehicle_type,
+                    vehicle_type=inspection.vehicle_type.value
+                    if hasattr(inspection.vehicle_type, "value")
+                    else inspection.vehicle_type,
                     inspector_id=inspection.inspector_id,
                     status=inspection.status.value,
                     scores=[
                         CheckpointScoreResponse(
-                            checkpoint_type=score.checkpoint_type,
+                            checkpoint_type=score.checkpoint_type.value
+                            if hasattr(score.checkpoint_type, "value")
+                            else score.checkpoint_type,
                             score=score.score,
                             observations=score.notes
                             if hasattr(score, "notes")

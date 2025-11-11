@@ -1,5 +1,5 @@
 # Multi-stage build for production optimization
-FROM python:3.10-slim as builder
+FROM python:3.10-slim AS builder
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -39,6 +39,16 @@ WORKDIR /app
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY scripts/ ./scripts/
+COPY docker-entrypoint.sh ./
+
+# Install additional runtime dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make entrypoint script executable
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
@@ -51,5 +61,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Run application
-CMD ["uvicorn", "src.vehicle_inspection.presentation.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run entrypoint script
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -22,8 +22,17 @@ from src.vehicle_inspection.application.ports.repositories import (
     InspectionRepository,
 )
 from src.vehicle_inspection.domain.entities.booking import Booking, BookingStatus
-from src.vehicle_inspection.domain.entities.vehicle import Vehicle, Car, Motorcycle
-from src.vehicle_inspection.domain.entities.inspector import Inspector, InspectorStatus
+from src.vehicle_inspection.domain.entities.vehicle import (
+    Vehicle,
+    Car,
+    Motorcycle,
+    VehicleType,
+)
+from src.vehicle_inspection.domain.entities.inspector import (
+    Inspector,
+    InspectorStatus,
+    InspectorRole,
+)
 from src.vehicle_inspection.domain.entities.inspection import (
     Inspection,
     InspectionStatus,
@@ -660,9 +669,9 @@ class SQLAlchemyInspectorRepository(InspectorRepository):
             email=model.email,
             first_name=model.first_name,
             last_name=model.last_name,
-            role=model.role,
+            role=InspectorRole(model.role),
             license_number=model.license_number,
-            status=model.status,
+            status=InspectorStatus(model.status),
             phone=model.phone,
             hire_date=model.hire_date,
             created_at=model.created_at,
@@ -895,12 +904,12 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
 
         return Inspection(
             license_plate=model.license_plate,
-            vehicle_type=model.vehicle_type,
+            vehicle_type=VehicleType(model.vehicle_type),
             inspector_id=model.inspector_id,
             inspection_id=model.id,
             checkpoint_scores=checkpoint_scores,
             observations=model.observations or "",
-            status=model.status,
+            status=InspectionStatus(model.status),
             created_at=model.created_at,
             updated_at=model.updated_at,
             completed_at=model.completed_at,
