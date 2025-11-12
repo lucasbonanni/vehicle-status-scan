@@ -154,19 +154,37 @@ class SQLAlchemyBookingRepository(BookingRepository):
         slot_models = result.scalars().all()
 
         if slot_models:
-            # Return existing slots from database
+            # Return existing slots from database, but filter out booked ones
             self._logger.debug(
                 "Found existing time slots in database",
                 extra={"slot_count": len(slot_models), "date": str(target_date)},
             )
-            return [self._slot_model_to_value_object(model) for model in slot_models]
+            available_slots = []
+            for model in slot_models:
+                # Check if this specific slot has any confirmed or pending bookings
+                booking_stmt = select(func.count(BookingModel.id)).where(
+                    and_(
+                        BookingModel.appointment_date == model.date,
+                        BookingModel.status.in_(
+                            [BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value]
+                        ),
+                    )
+                )
+                booking_result = await self._session.execute(booking_stmt)
+                booking_count = booking_result.scalar()
+
+                # Only include slot if it has no bookings
+                if booking_count == 0:
+                    available_slots.append(self._slot_model_to_value_object(model))
+
+            return available_slots
         else:
             # Generate default slots if none exist
             self._logger.info(
                 "No existing slots found, generating default slots",
                 extra={"date": str(target_date)},
             )
-            return self._generate_default_slots(target_date)
+            return await self._generate_default_slots(target_date)
 
     async def is_slot_available(self, appointment_date: datetime) -> bool:
         """Check if a specific datetime slot is available."""
@@ -254,24 +272,39 @@ class SQLAlchemyBookingRepository(BookingRepository):
             current_bookings=model.current_bookings,
         )
 
-    def _generate_default_slots(self, target_date: date) -> List[TimeSlot]:
-        """Generate default time slots for a date."""
+    async def _generate_default_slots(self, target_date: date) -> List[TimeSlot]:
+        """Generate default time slots for a date, filtering out booked slots."""
         slots = []
 
         # Create hourly slots from 8 AM to 5 PM
         for hour in range(8, 17):
             start_time = time(hour, 0)
             end_time = time(hour + 1, 0) if hour < 16 else time(17, 0)
+            slot_datetime = datetime.combine(target_date, start_time)
 
-            slot = TimeSlot(
-                date=datetime.combine(target_date, start_time),
-                start_time=start_time,
-                end_time=end_time,
-                is_available=True,
-                max_bookings=1,
-                current_bookings=0,
+            # Check if this slot has any bookings
+            booking_stmt = select(func.count(BookingModel.id)).where(
+                and_(
+                    BookingModel.appointment_date == slot_datetime,
+                    BookingModel.status.in_(
+                        [BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value]
+                    ),
+                )
             )
-            slots.append(slot)
+            booking_result = await self._session.execute(booking_stmt)
+            booking_count = booking_result.scalar()
+
+            # Only add slot if it has no bookings
+            if booking_count == 0:
+                slot = TimeSlot(
+                    date=slot_datetime,
+                    start_time=start_time,
+                    end_time=end_time,
+                    is_available=True,
+                    max_bookings=1,
+                    current_bookings=0,
+                )
+                slots.append(slot)
 
         return slots
 
