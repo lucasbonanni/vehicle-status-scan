@@ -969,7 +969,7 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
             license_plate=inspection.license_plate.upper()
             .replace(" ", "")
             .replace("-", ""),
-            vehicle_type=inspection.vehicle_type,
+            vehicle_type=inspection.vehicle_type.value,
             inspector_id=inspection.inspector_id,
             checkpoint_scores=checkpoint_scores_json,
             total_score=inspection.get_total_score()
@@ -980,7 +980,7 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
             if inspection.checkpoint_scores
             else None,
             observations=inspection.observations,
-            status=inspection.status,
+            status=inspection.status.value,
             created_at=inspection.created_at,
             updated_at=inspection.updated_at,
             completed_at=inspection.completed_at,
@@ -1007,7 +1007,7 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
         model.license_plate = (
             inspection.license_plate.upper().replace(" ", "").replace("-", "")
         )
-        model.vehicle_type = inspection.vehicle_type
+        model.vehicle_type = inspection.vehicle_type.value
         model.inspector_id = inspection.inspector_id
         model.checkpoint_scores = checkpoint_scores_json
         model.total_score = (
@@ -1018,7 +1018,7 @@ class SQLAlchemyInspectionRepository(InspectionRepository):
             inspection.requires_reinspection if inspection.checkpoint_scores else None
         )
         model.observations = inspection.observations
-        model.status = inspection.status
+        model.status = inspection.status.value
         model.completed_at = inspection.completed_at
 
 
