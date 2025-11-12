@@ -149,7 +149,7 @@ async def get_inspection_report(license_plate: str) -> InspectionReport:
                 )
 
             # Only return completed inspections for public access
-            if inspection.status.value != "COMPLETED":
+            if inspection.status.value != "completed":
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={
@@ -269,7 +269,7 @@ async def get_inspection_history(
             completed_inspections = [
                 inspection
                 for inspection in inspections
-                if inspection.status.value == "COMPLETED"
+                if inspection.status.value == "completed"
             ]
 
             if not completed_inspections:
