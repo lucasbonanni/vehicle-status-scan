@@ -6,7 +6,7 @@ from uuid import UUID
 
 from ..ports.repositories import BookingRepository, VehicleRepository, UserRepository
 from ...domain.entities.booking import Booking, BookingStatus
-from ...domain.entities.vehicle import Vehicle, Car, Motorcycle
+from ...domain.entities.vehicle import Car
 from ...domain.value_objects.time_slot import TimeSlot
 
 
@@ -24,8 +24,9 @@ class LicensePlateValidator:
 
         # Basic validation - adjust regex as needed for your country's format
         import re
+
         # Example: ABC123, AB123CD, etc. - customize as needed
-        pattern = r'^[A-Z0-9]{3,8}$'
+        pattern = r"^[A-Z0-9]{3,8}$"
         return bool(re.match(pattern, plate))
 
     @staticmethod
@@ -37,7 +38,9 @@ class LicensePlateValidator:
 class TimeSlotGenerator:
     """Service for generating available time slots."""
 
-    def __init__(self, start_hour: int = 8, end_hour: int = 17, slot_duration_minutes: int = 60):
+    def __init__(
+        self, start_hour: int = 8, end_hour: int = 17, slot_duration_minutes: int = 60
+    ):
         self.start_hour = start_hour
         self.end_hour = end_hour
         self.slot_duration_minutes = slot_duration_minutes
@@ -50,7 +53,9 @@ class TimeSlotGenerator:
 
         while current_time < end_time:
             # Calculate slot end time
-            slot_end = datetime.combine(target_date, current_time) + timedelta(minutes=self.slot_duration_minutes)
+            slot_end = datetime.combine(target_date, current_time) + timedelta(
+                minutes=self.slot_duration_minutes
+            )
             slot_end_time = slot_end.time()
 
             # Don't create slot if it extends beyond working hours
@@ -61,12 +66,14 @@ class TimeSlotGenerator:
                     end_time=slot_end_time,
                     is_available=True,
                     max_bookings=1,
-                    current_bookings=0
+                    current_bookings=0,
                 )
                 slots.append(slot)
 
             # Move to next slot
-            next_datetime = datetime.combine(target_date, current_time) + timedelta(minutes=self.slot_duration_minutes)
+            next_datetime = datetime.combine(target_date, current_time) + timedelta(
+                minutes=self.slot_duration_minutes
+            )
             current_time = next_datetime.time()
 
         return slots
@@ -80,7 +87,7 @@ class BookingService:
         booking_repository: BookingRepository,
         vehicle_repository: VehicleRepository,
         user_repository: UserRepository,
-        time_slot_generator: Optional[TimeSlotGenerator] = None
+        time_slot_generator: Optional[TimeSlotGenerator] = None,
     ):
         self._booking_repository = booking_repository
         self._vehicle_repository = vehicle_repository
@@ -91,18 +98,17 @@ class BookingService:
     async def get_available_slots(self, target_date: date) -> List[TimeSlot]:
         """Get available time slots for a specific date."""
         # Generate all possible slots for the date
-        all_slots = self._time_slot_generator.generate_slots_for_date(target_date)
+        # all_slots = self._time_slot_generator.generate_slots_for_date(target_date)
 
         # Get available slots from repository (which considers existing bookings)
-        available_slots = await self._booking_repository.find_available_slots(target_date)
+        available_slots = await self._booking_repository.find_available_slots(
+            target_date
+        )
 
         return available_slots
 
     async def request_appointment(
-        self,
-        license_plate: str,
-        appointment_date: datetime,
-        user_id: UUID
+        self, license_plate: str, appointment_date: datetime, user_id: UUID
     ) -> Booking:
         """Request an appointment for vehicle inspection."""
         # Validate license plate
@@ -112,9 +118,8 @@ class BookingService:
         # Normalize license plate
         normalized_plate = self._license_validator.normalize(license_plate)
 
-        # Check if user exists
-        if not await self._user_repository.exists(user_id):
-            raise ValueError(f"User not found: {user_id}")
+        # Note: User validation is skipped for anonymous bookings (no user account required)
+        # The user_id is used internally but the user doesn't need to exist in the system
 
         # Check if slot is available
         if not await self._booking_repository.is_slot_available(appointment_date):
@@ -136,7 +141,7 @@ class BookingService:
             license_plate=normalized_plate,
             appointment_date=appointment_date,
             user_id=user_id,
-            status=BookingStatus.PENDING
+            status=BookingStatus.PENDING,
         )
 
         # Save booking

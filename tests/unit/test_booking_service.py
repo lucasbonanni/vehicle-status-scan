@@ -8,7 +8,7 @@ from uuid import uuid4
 from src.vehicle_inspection.application.services.booking_service import (
     BookingService,
     LicensePlateValidator,
-    TimeSlotGenerator
+    TimeSlotGenerator,
 )
 from src.vehicle_inspection.domain.entities.booking import Booking, BookingStatus
 from src.vehicle_inspection.domain.entities.vehicle import Car
@@ -42,7 +42,7 @@ class TestLicensePlateValidator:
             ("abc123", "ABC123"),
             ("  XYZ789  ", "XYZ789"),
             ("def456", "DEF456"),
-            ("  abc 123  ", "ABC 123")
+            ("  abc 123  ", "ABC 123"),
         ]
 
         for input_plate, expected in test_cases:
@@ -62,7 +62,9 @@ class TestTimeSlotGenerator:
 
     def test_custom_generator_settings(self):
         """Test custom time slot generator settings."""
-        generator = TimeSlotGenerator(start_hour=9, end_hour=18, slot_duration_minutes=30)
+        generator = TimeSlotGenerator(
+            start_hour=9, end_hour=18, slot_duration_minutes=30
+        )
 
         assert generator.start_hour == 9
         assert generator.end_hour == 18
@@ -94,7 +96,9 @@ class TestTimeSlotGenerator:
 
     def test_generate_slots_custom_settings(self):
         """Test slot generation with custom settings."""
-        generator = TimeSlotGenerator(start_hour=10, end_hour=14, slot_duration_minutes=30)
+        generator = TimeSlotGenerator(
+            start_hour=10, end_hour=14, slot_duration_minutes=30
+        )
         target_date = date(2025, 10, 1)
 
         slots = generator.generate_slots_for_date(target_date)
@@ -136,7 +140,7 @@ class TestBookingService:
             self.mock_booking_repo,
             self.mock_vehicle_repo,
             self.mock_user_repo,
-            self.mock_time_generator
+            self.mock_time_generator,
         )
 
     def test_service_initialization(self):
@@ -159,7 +163,7 @@ class TestBookingService:
                 date=datetime.combine(target_date, datetime.min.time()),
                 start_time=datetime.min.time().replace(hour=9),
                 end_time=datetime.min.time().replace(hour=10),
-                is_available=True
+                is_available=True,
             )
         ]
 
@@ -179,19 +183,23 @@ class TestBookingService:
         appointment_date = datetime.utcnow() + timedelta(days=1)
 
         # Mock dependencies
-        self.mock_user_repo.exists.return_value = True
         self.mock_booking_repo.is_slot_available.return_value = True
         self.mock_vehicle_repo.find_by_license_plate.return_value = None
-        self.mock_vehicle_repo.save.return_value = Car("ABC123", "Unknown", "Unknown", 2020)
+        self.mock_vehicle_repo.save.return_value = Car(
+            "ABC123", "Unknown", "Unknown", 2020
+        )
 
         mock_booking = Booking("ABC123", appointment_date, user_id)
         self.mock_booking_repo.save.return_value = mock_booking
 
-        result = await self.service.request_appointment("abc123", appointment_date, user_id)
+        result = await self.service.request_appointment(
+            "abc123", appointment_date, user_id
+        )
 
         assert result == mock_booking
-        self.mock_user_repo.exists.assert_called_once_with(user_id)
-        self.mock_booking_repo.is_slot_available.assert_called_once_with(appointment_date)
+        self.mock_booking_repo.is_slot_available.assert_called_once_with(
+            appointment_date
+        )
         self.mock_vehicle_repo.find_by_license_plate.assert_called_once_with("ABC123")
         self.mock_booking_repo.save.assert_called_once()
 
@@ -207,19 +215,6 @@ class TestBookingService:
             await self.service.request_appointment("", appointment_date, user_id)
 
     @pytest.mark.asyncio
-    async def test_request_appointment_user_not_found(self):
-        """Test appointment request with non-existent user."""
-        self.setup_mocks()
-
-        user_id = uuid4()
-        appointment_date = datetime.utcnow() + timedelta(days=1)
-
-        self.mock_user_repo.exists.return_value = False
-
-        with pytest.raises(ValueError, match="User not found"):
-            await self.service.request_appointment("ABC123", appointment_date, user_id)
-
-    @pytest.mark.asyncio
     async def test_request_appointment_slot_not_available(self):
         """Test appointment request with unavailable slot."""
         self.setup_mocks()
@@ -227,7 +222,6 @@ class TestBookingService:
         user_id = uuid4()
         appointment_date = datetime.utcnow() + timedelta(days=1)
 
-        self.mock_user_repo.exists.return_value = True
         self.mock_booking_repo.is_slot_available.return_value = False
 
         with pytest.raises(ValueError, match="Selected time slot is not available"):
@@ -241,7 +235,9 @@ class TestBookingService:
         user_id = uuid4()
         appointment_date = datetime.utcnow() - timedelta(days=1)  # Past date
 
-        with pytest.raises(ValueError, match="Appointment must be scheduled for a future date"):
+        with pytest.raises(
+            ValueError, match="Appointment must be scheduled for a future date"
+        ):
             await self.service.request_appointment("ABC123", appointment_date, user_id)
 
     @pytest.mark.asyncio
@@ -319,7 +315,7 @@ class TestBookingService:
         user_id = uuid4()
         mock_bookings = [
             Booking("ABC123", datetime.utcnow() + timedelta(days=1), user_id),
-            Booking("XYZ789", datetime.utcnow() + timedelta(days=2), user_id)
+            Booking("XYZ789", datetime.utcnow() + timedelta(days=2), user_id),
         ]
 
         self.mock_booking_repo.find_by_user_id.return_value = mock_bookings

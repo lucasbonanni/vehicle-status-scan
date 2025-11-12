@@ -69,7 +69,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
             # Update existing booking
             existing_booking.license_plate = booking.license_plate
             existing_booking.appointment_date = booking.appointment_date
-            existing_booking.status = booking.status
+            existing_booking.status = booking.status.value
             existing_booking.user_id = booking.user_id
             existing_booking.updated_at = datetime.utcnow()
         else:
@@ -78,7 +78,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
                 id=booking.id,
                 license_plate=booking.license_plate,
                 appointment_date=booking.appointment_date,
-                status=booking.status,
+                status=booking.status.value,
                 user_id=booking.user_id,
                 created_at=booking.created_at,
                 updated_at=datetime.utcnow(),
@@ -185,7 +185,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
             and_(
                 BookingModel.appointment_date == appointment_date,
                 BookingModel.status.in_(
-                    [BookingStatus.PENDING, BookingStatus.CONFIRMED]
+                    [BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value]
                 ),
             )
         )
@@ -237,7 +237,7 @@ class SQLAlchemyBookingRepository(BookingRepository):
             booking_id=model.id,
             license_plate=model.license_plate,
             appointment_date=model.appointment_date,
-            status=model.status,
+            status=BookingStatus(model.status),
             user_id=model.user_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
